@@ -1,0 +1,5 @@
+{
+  "name": "Copy of Scaffolding Material Estimator2",
+  "description": "A modern web application to calculate the required materials and total weight for construction scaffolding based on user-defined parameters. It provides detailed material lists and transport recommendations.",
+  "requestFramePermissions": []
+}
