@@ -161,14 +161,30 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
   toggleBayStair: (runId, bayId) =>
     set((s) => ({
       history: pushHistory(s),
-      runs: s.runs.map((run) =>
-        run.id === runId
-          ? {
-              ...run,
-              bays: run.bays.map((b) => (b.id === bayId ? { ...b, isStair: !b.isStair } : b)),
-            }
-          : run,
-      ),
+      runs: s.runs.map((run) => {
+        if (run.id !== runId) return run;
+        const idx = run.bays.findIndex((b) => b.id === bayId);
+        if (idx < 0) return run;
+        const bays = run.bays.map((b) => ({ ...b }));
+
+        if (bays[idx].isStair) {
+          // 解除: このベイを含む連続階段ブロックをまとめて解除
+          let lo = idx;
+          let hi = idx;
+          while (lo > 0 && bays[lo - 1].isStair) lo--;
+          while (hi < bays.length - 1 && bays[hi + 1].isStair) hi++;
+          for (let i = lo; i <= hi; i++) bays[i].isStair = false;
+        } else {
+          // 設定: 階段は2スパン1セット（sub-alba 準拠）。
+          // 隣のスパン（次を優先、なければ前）とペアで階段化する。
+          bays[idx].isStair = true;
+          const next = idx + 1 < bays.length && !bays[idx + 1].isStair ? idx + 1 : null;
+          const prev = idx - 1 >= 0 && !bays[idx - 1].isStair ? idx - 1 : null;
+          const partner = next ?? prev;
+          if (partner !== null) bays[partner].isStair = true;
+        }
+        return { ...run, bays };
+      }),
     })),
 
   setRunWidth: (runId, width) =>
