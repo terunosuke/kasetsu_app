@@ -54,6 +54,7 @@ interface ScaffoldState {
 
   select(sel: Selection | null): void;
   setBaySpan(runId: string, bayId: string, span: SpanMM): void;
+  toggleBayStair(runId: string, bayId: string): void;
   setRunWidth(runId: string, width: WidthMM): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
@@ -153,6 +154,19 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
       runs: s.runs.map((run) =>
         run.id === runId
           ? { ...run, bays: run.bays.map((b) => (b.id === bayId ? { ...b, span } : b)) }
+          : run,
+      ),
+    })),
+
+  toggleBayStair: (runId, bayId) =>
+    set((s) => ({
+      history: pushHistory(s),
+      runs: s.runs.map((run) =>
+        run.id === runId
+          ? {
+              ...run,
+              bays: run.bays.map((b) => (b.id === bayId ? { ...b, isStair: !b.isStair } : b)),
+            }
           : run,
       ),
     })),

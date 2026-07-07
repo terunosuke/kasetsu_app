@@ -9,12 +9,19 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import type { ThreeEvent } from '@react-three/fiber';
 import { DECK_LAYOUT, DECK_VISUAL_WIDTH } from '../catalog/albatross';
-import { nodePoints, type GlobalSettings, type Run } from '../model/types';
+import {
+  liftHeights,
+  nodePoints,
+  resolveAntiLevels,
+  resolveStairLevels,
+  resolveToeboardLevels,
+  type GlobalSettings,
+  type Run,
+} from '../model/types';
 
 const M = 1 / 1000; // mm → m
 
 // 視覚定数（m）
-const LIFT = 1.8;
 const BASE_H = 0.3; // ジャッキベース高さ（この上に支柱が立つ）
 const LEG_R = 0.024;
 const RAIL_R = 0.013;
@@ -31,6 +38,7 @@ const C_BRACE = '#9aa5af';
 const C_DECK = '#c8ccd0';
 const C_TOE = '#d9a62e';
 const C_TRANSOM = '#6b7b8c';
+const C_STAIR = '#4f9d69';
 const HIGHLIGHT = '#3b82f6';
 
 const unitCylinder = new THREE.CylinderGeometry(1, 1, 1, 10);
@@ -80,21 +88,60 @@ function Bar({ a, b, r, color, paint }: { a: V3; b: V3; r: number; color: string
 function Box({
   center,
   size,
-  rotationY = 0,
   color,
   paint,
 }: {
   center: V3;
   size: V3;
-  rotationY?: number;
   color: string;
   paint: Paint;
 }) {
   return (
-    <mesh geometry={unitBox} position={center} rotation={[0, rotationY, 0]} scale={size}>
+    <mesh geometry={unitBox} position={center} scale={size}>
       <meshStandardMaterial {...matProps(color, paint)} />
     </mesh>
   );
+}
+
+/** 階段ユニット（1スパン・1段分の簡易表現: 斜行する踏み段） */
+function StairFlight({
+  a,
+  b,
+  y0,
+  y1,
+  paint,
+}: {
+  a: { x: number; z: number };
+  b: { x: number; z: number };
+  y0: number;
+  y1: number;
+  paint: Paint;
+}) {
+  const steps = 7;
+  const items = [];
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps;
+    const t1 = (i + 1) / steps;
+    const x = a.x + (b.x - a.x) * (t0 + t1) * 0.5;
+    const z = a.z + (b.z - a.z) * (t0 + t1) * 0.5;
+    const y = y0 + (y1 - y0) * (t0 + t1) * 0.5;
+    const alongX = Math.abs(b.x - a.x) > Math.abs(b.z - a.z);
+    const stepLen = (alongX ? Math.abs(b.x - a.x) : Math.abs(b.z - a.z)) / steps;
+    items.push(
+      <Box
+        key={i}
+        center={[x, y, z]}
+        size={alongX ? [stepLen * 0.9, 0.04, 0.55] : [0.55, 0.04, stepLen * 0.9]}
+        color={C_STAIR}
+        paint={paint}
+      />,
+    );
+  }
+  // 側桁（斜め材）
+  items.push(
+    <Bar key="rail" a={[a.x, y0 + 0.05, a.z]} b={[b.x, y1 + 0.05, b.z]} r={0.02} color={C_STAIR} paint={paint} />,
+  );
+  return <>{items}</>;
 }
 
 export function RunParts({
@@ -117,7 +164,24 @@ export function RunParts({
   const w = run.width * M;
   const half = w / 2;
   const pts = useMemo(() => nodePoints(run).map((p) => ({ x: p.x * M, z: p.z * M })), [run]);
-  const legTop = BASE_H + levels * LIFT + 0.95;
+
+  // 段ごとのデッキ高さ（累積・最上段900対応）
+  const { deckYs, legTop } = useMemo(() => {
+    const heights = liftHeights(settings);
+    const ys: number[] = [];
+    let acc = BASE_H;
+    for (const h of heights) {
+      acc += h * M;
+      ys.push(acc);
+    }
+    return { deckYs: ys, legTop: acc + 0.95 };
+  }, [settings]);
+
+  const antiSet = useMemo(() => new Set(resolveAntiLevels(settings)), [settings]);
+  const toeSet = useMemo(() => new Set(resolveToeboardLevels(settings)), [settings]);
+  const stairSet = useMemo(() => new Set(resolveStairLevels(settings)), [settings]);
+  const toeFaces: number[] =
+    settings.toeboardFaces === 'both' ? [-1, 1] : settings.toeboardFaces === 'single' ? [1] : [];
 
   if (run.bays.length === 0) return null;
 
@@ -144,57 +208,56 @@ export function RunParts({
         const perp = perpAt(i);
         const inner: V3 = [p.x - perp.x * half, 0, p.z - perp.z * half];
         const outer: V3 = [p.x + perp.x * half, 0, p.z + perp.z * half];
-        const isEnd = i === 0 || i === pts.length - 1;
+        // 妻側: 0面=なし / 1面=始端のみ / 2面=両端
+        const isTsumaEnd =
+          (settings.tsumaCount >= 1 && i === 0) ||
+          (settings.tsumaCount >= 2 && i === pts.length - 1);
         return (
           <group key={i}>
             {[inner, outer].map((leg, k) => (
               <group key={k}>
-                {/* ジャッキベース */}
-                <Box center={[leg[0], 0.02, leg[2]]} size={[0.13, 0.04, 0.13]} color={C_JACK} paint={paint} />
-                <Bar a={[leg[0], 0.04, leg[2]]} b={[leg[0], BASE_H, leg[2]]} r={0.017} color={C_JACK} paint={paint} />
+                {settings.jackBaseMode !== 'none' && (
+                  <>
+                    <Box center={[leg[0], 0.02, leg[2]]} size={[0.13, 0.04, 0.13]} color={C_JACK} paint={paint} />
+                    <Bar a={[leg[0], 0.04, leg[2]]} b={[leg[0], BASE_H, leg[2]]} r={0.017} color={C_JACK} paint={paint} />
+                  </>
+                )}
                 {/* 支柱（組合せ本数は BOM 側で解決。視覚上は1本で表現） */}
                 <Bar a={[leg[0], BASE_H, leg[2]]} b={[leg[0], legTop, leg[2]]} r={LEG_R} color={C_LEG} paint={paint} />
               </group>
             ))}
             {/* 短手布材（各段のアンチ受け） */}
-            {Array.from({ length: levels }, (_, li) => {
-              const y = BASE_H + (li + 1) * LIFT;
-              return (
-                <Bar
-                  key={li}
-                  a={[inner[0], y, inner[2]]}
-                  b={[outer[0], y, outer[2]]}
-                  r={TRANSOM_R}
-                  color={C_TRANSOM}
-                  paint={paint}
-                />
-              );
-            })}
-            {/* 妻側手すり・妻側巾木（列の両端のみ） */}
-            {settings.tsuma &&
-              isEnd &&
-              Array.from({ length: levels }, (_, li) => {
-                const deckY = BASE_H + (li + 1) * LIFT;
-                return (
+            {deckYs.map((y, li) => (
+              <Bar
+                key={li}
+                a={[inner[0], y, inner[2]]}
+                b={[outer[0], y, outer[2]]}
+                r={TRANSOM_R}
+                color={C_TRANSOM}
+                paint={paint}
+              />
+            ))}
+            {/* 妻側手すり・妻側巾木（アンチ設置段に付く） */}
+            {isTsumaEnd &&
+              deckYs.map((deckY, li) =>
+                antiSet.has(li + 1) ? (
                   <group key={li}>
                     <Bar a={[inner[0], deckY + 0.45, inner[2]]} b={[outer[0], deckY + 0.45, outer[2]]} r={RAIL_R} color={C_RAIL} paint={paint} />
                     <Bar a={[inner[0], deckY + 0.9, inner[2]]} b={[outer[0], deckY + 0.9, outer[2]]} r={RAIL_R} color={C_RAIL} paint={paint} />
-                    {settings.toeboard && (
-                      <Box
-                        center={[(inner[0] + outer[0]) / 2, deckY + TOE_H / 2 + DECK_T, (inner[2] + outer[2]) / 2]}
-                        size={[Math.abs(outer[0] - inner[0]) || 0.015, TOE_H, Math.abs(outer[2] - inner[2]) || 0.015]}
-                        color={C_TOE}
-                        paint={paint}
-                      />
-                    )}
+                    <Box
+                      center={[(inner[0] + outer[0]) / 2, deckY + TOE_H / 2 + DECK_T, (inner[2] + outer[2]) / 2]}
+                      size={[Math.abs(outer[0] - inner[0]) || 0.015, TOE_H, Math.abs(outer[2] - inner[2]) || 0.015]}
+                      color={C_TOE}
+                      paint={paint}
+                    />
                   </group>
-                );
-              })}
+                ) : null,
+              )}
           </group>
         );
       })}
 
-      {/* ===== ベイ（スパン）ごと: アンチ・手すり・ブレス・巾木 ===== */}
+      {/* ===== ベイ（スパン）ごと: アンチ・手すり・ブレス・巾木・階段 ===== */}
       {run.bays.map((bay, bi) => {
         const a = pts[bi];
         const b = pts[bi + 1];
@@ -219,30 +282,37 @@ export function RunParts({
                 : undefined
             }
           >
-            {Array.from({ length: levels }, (_, li) => {
+            {deckYs.map((deckY, li) => {
               const level = li + 1;
-              const deckY = BASE_H + level * LIFT;
-              const y0 = BASE_H + li * LIFT;
+              const y0 = li === 0 ? BASE_H : deckYs[li - 1];
+              const hasDeck = antiSet.has(level);
+              const hasToe = toeSet.has(level);
+              const isStairFlight = bay.isStair && stairSet.has(level);
               return (
                 <group key={li}>
                   {/* アンチ（枠幅ごとの敷き並べ構成） */}
-                  {(() => {
-                    let offset = -deckTotal / 2;
-                    return deckTypes.map((t, di) => {
-                      const dw = DECK_VISUAL_WIDTH[t] * M;
-                      const c = offset + dw / 2;
-                      offset += dw;
-                      return (
-                        <Box
-                          key={di}
-                          center={[mid.x + perp.x * c, deckY + DECK_T / 2, mid.z + perp.z * c]}
-                          size={alongX ? [spanLen * 0.98, DECK_T, dw * 0.96] : [dw * 0.96, DECK_T, spanLen * 0.98]}
-                          color={C_DECK}
-                          paint={bayPaint}
-                        />
-                      );
-                    });
-                  })()}
+                  {hasDeck &&
+                    (() => {
+                      let offset = -deckTotal / 2;
+                      return deckTypes.map((t, di) => {
+                        const dw = DECK_VISUAL_WIDTH[t] * M;
+                        const c = offset + dw / 2;
+                        offset += dw;
+                        return (
+                          <Box
+                            key={di}
+                            center={[mid.x + perp.x * c, deckY + DECK_T / 2, mid.z + perp.z * c]}
+                            size={alongX ? [spanLen * 0.98, DECK_T, dw * 0.96] : [dw * 0.96, DECK_T, spanLen * 0.98]}
+                            color={C_DECK}
+                            paint={bayPaint}
+                          />
+                        );
+                      });
+                    })()}
+                  {/* 階段（下の段からこの段のデッキへ上がる） */}
+                  {isStairFlight && (
+                    <StairFlight a={a} b={b} y0={li === 0 ? BASE_H : deckYs[li - 1]} y1={deckY} paint={bayPaint} />
+                  )}
                   {/* 長手手すり（内外 各1本） */}
                   {[-1, 1].map((side) => (
                     <Bar
@@ -254,25 +324,27 @@ export function RunParts({
                       paint={bayPaint}
                     />
                   ))}
-                  {/* ブレス（外側・段ごとに向き交互） */}
-                  <Bar
-                    a={[
-                      (level % 2 === 1 ? a.x : b.x) + perp.x * half,
-                      y0 + 0.1,
-                      (level % 2 === 1 ? a.z : b.z) + perp.z * half,
-                    ]}
-                    b={[
-                      (level % 2 === 1 ? b.x : a.x) + perp.x * half,
-                      deckY - 0.1,
-                      (level % 2 === 1 ? b.z : a.z) + perp.z * half,
-                    ]}
-                    r={BRACE_R}
-                    color={C_BRACE}
-                    paint={bayPaint}
-                  />
-                  {/* 巾木（内外 各1枚） */}
-                  {settings.toeboard &&
-                    [-1, 1].map((side) => (
+                  {/* ブレス（外側・段ごとに向き交互）※階段スパンには表示しない */}
+                  {!bay.isStair && (
+                    <Bar
+                      a={[
+                        (level % 2 === 1 ? a.x : b.x) + perp.x * half,
+                        y0 + 0.1,
+                        (level % 2 === 1 ? a.z : b.z) + perp.z * half,
+                      ]}
+                      b={[
+                        (level % 2 === 1 ? b.x : a.x) + perp.x * half,
+                        deckY - 0.1,
+                        (level % 2 === 1 ? b.z : a.z) + perp.z * half,
+                      ]}
+                      r={BRACE_R}
+                      color={C_BRACE}
+                      paint={bayPaint}
+                    />
+                  )}
+                  {/* 巾木（面数設定に応じて） */}
+                  {hasToe &&
+                    toeFaces.map((side) => (
                       <Box
                         key={side}
                         center={[

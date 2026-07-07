@@ -13,7 +13,7 @@ export function SelectionPanel() {
   if (!selection || !run) return null;
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl bg-white/95 p-3 shadow-lg ring-1 ring-blue-200">
+    <div className="flex max-h-[32%] shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl bg-white/95 p-3 shadow-lg ring-1 ring-blue-200">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-blue-700">選択中の列</h2>
         <button
@@ -45,6 +45,17 @@ export function SelectionPanel() {
         </select>
       </div>
 
+      {selection.bayId && (
+        <button
+          className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+          onClick={() => useScaffoldStore.getState().toggleBayStair(run.id, selection.bayId!)}
+        >
+          {run.bays.find((b) => b.id === selection.bayId)?.isStair
+            ? '🪜 階段を解除する'
+            : '🪜 このスパンを階段にする'}
+        </button>
+      )}
+
       <div className="max-h-44 overflow-y-auto rounded-md border border-slate-200">
         {run.bays.map((bay, i) => {
           const isSelected = selection.bayId === bay.id;
@@ -56,7 +67,10 @@ export function SelectionPanel() {
               }`}
               onClick={() => useScaffoldStore.getState().select({ runId: run.id, bayId: bay.id })}
             >
-              <span className="text-xs text-slate-500">#{i + 1}</span>
+              <span className="text-xs text-slate-500">
+                #{i + 1}
+                {bay.isStair && <span title="階段"> 🪜</span>}
+              </span>
               <select
                 className={selectCls}
                 value={bay.span}

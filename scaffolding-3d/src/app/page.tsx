@@ -71,8 +71,10 @@ export default function Home() {
       </div>
 
       {/* 右: 設定・選択・数量 */}
-      <div className="absolute bottom-4 right-4 top-4 z-10 flex w-80 flex-col gap-3">
-        <SettingsPanel />
+      <div className="absolute bottom-4 right-4 top-4 z-10 flex w-80 flex-col gap-3 overflow-hidden">
+        <div className="flex min-h-0 max-h-[48%] flex-col">
+          <SettingsPanel bom={bom} />
+        </div>
         <SelectionPanel />
         <BomPanel bom={bom} />
       </div>
