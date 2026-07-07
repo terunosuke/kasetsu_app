@@ -211,3 +211,42 @@ export function resolveStairLevels(s: GlobalSettings): number[] {
     return Array.from({ length: Math.max(0, s.levels - 1) }, (_, i) => i + 1);
   return parseLevels(s.stairLevels).filter((l) => l <= s.levels);
 }
+
+/**
+ * 連続する階段スパンを「セット」にまとめる（1セット = 最大2スパン）。
+ * 2スパン連続 → 斜め型階段（2段を一気に登る）、単独1スパン → 垂直型階段。
+ * 3スパン以上連続した場合は 2+1 のように分割する。
+ * 戻り値は各セットに属するベイ index の配列。
+ */
+export function stairGroups(bays: Bay[]): number[][] {
+  const groups: number[][] = [];
+  let current: number[] = [];
+  const flush = () => {
+    if (current.length > 0) groups.push(current);
+    current = [];
+  };
+  bays.forEach((bay, i) => {
+    if (bay.isStair) {
+      current.push(i);
+      if (current.length === 2) flush();
+    } else {
+      flush();
+    }
+  });
+  flush();
+  return groups;
+}
+
+/**
+ * 拡幅の対象スパン（階段セット＋両隣）を返す（sub-alba 準拠）。
+ * 拡幅は枠幅914の列でのみ 3D 形状に反映される。
+ */
+export function widenedBaySet(bays: Bay[]): Set<number> {
+  const widened = new Set<number>();
+  for (const group of stairGroups(bays)) {
+    const lo = Math.max(0, group[0] - 1);
+    const hi = Math.min(bays.length - 1, group[group.length - 1] + 1);
+    for (let i = lo; i <= hi; i++) widened.add(i);
+  }
+  return widened;
+}

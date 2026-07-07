@@ -27,7 +27,9 @@ import {
   resolveStairLevels,
   resolveToeboardLevels,
   runLength,
+  stairGroups,
   totalHeightMm,
+  widenedBaySet,
   type GlobalSettings,
   type PillarSelection,
   type Run,
@@ -57,7 +59,7 @@ export interface Bom {
   totalLengthMm: number;
   totalHeightMm: number;
   bayCount: number;
-  stairCount: number;
+  stairCount: number; // 階段セット数
   nodeCount: number;
   pillarText: string;
   transportUnic: string;
@@ -137,7 +139,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
 
   let totalLengthMm = 0;
   let bayCount = 0;
-  let stairCount = 0;
+  let stairSetCount = 0; // 階段セット数（1セット = 連続する最大2スパン）
   let nodeCount = 0;
 
   const activeRuns = runs.filter((r) => r.bays.length > 0);
@@ -147,6 +149,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     const legs = nodes * 2; // 内外2列分の建地
     nodeCount += nodes;
     bayCount += run.bays.length;
+    stairSetCount += stairGroups(run.bays).length;
 
     for (const [len, count] of Object.entries(pillarCombo)) {
       add(`支柱（${len}）`, count * legs);
@@ -160,7 +163,6 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       for (const deckType of DECK_LAYOUT[run.width]) {
         add(`アンチ（${deckType}/${bay.span}）`, antiLevels.length);
       }
-      if (bay.isStair) stairCount += 1;
     }
 
     add(`短手布材（${run.width}）`, nodes * levels);
@@ -193,7 +195,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
 
   // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用） ---
   const jackBaseNeeded = s.jackBaseMode !== 'none' ? nodeCount * 2 : 0;
-  const stairExtraNodes = s.stairWidening ? 2 * stairCount : 0; // 拡幅時の追加建地
+  const stairExtraNodes = s.stairWidening ? 2 * stairSetCount : 0; // 拡幅時の追加建地（外2列/セット）
   if (s.jackBaseMode !== 'none') {
     if (s.jackBaseOption === 'allSB20') add('ジャッキベース（20）', jackBaseNeeded + stairExtraNodes);
     else if (s.jackBaseOption === 'allSB40') add('ジャッキベース（40）', jackBaseNeeded + stairExtraNodes);
@@ -207,42 +209,36 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     add('タイコ（80）', s.taiko80);
   }
 
-  // --- 階段（セット）と拡幅 ---
-  if (stairCount > 0) {
-    add('階段（セット）', stairCount * stairLevels.length);
+  // --- 階段（セット）と拡幅（sub-alba のアルバトロス拡幅ルール） ---
+  if (stairSetCount > 0) {
+    add('階段（セット）', stairSetCount * stairLevels.length);
 
     if (s.stairWidening) {
-      // 追加建地分の支柱・根がらみ
+      // 追加建地分の支柱・根がらみ（外2列 × セット数）
       for (const [len, count] of Object.entries(pillarCombo)) {
         add(`支柱（${len}）`, count * stairExtraNodes);
       }
       if (s.jackBaseMode !== 'none' && s.negarami) add('根がらみ支柱', stairExtraNodes);
 
-      // 短手布材・アンチの差替（sub-alba のアルバトロス拡幅ルール）
       for (const run of activeRuns) {
-        const stairBayIdx = run.bays
-          .map((b, i) => (b.isStair ? i : -1))
-          .filter((i) => i >= 0);
-        if (stairBayIdx.length === 0) continue;
+        const groups = stairGroups(run.bays);
+        if (groups.length === 0) continue;
 
         if (run.width === 914) {
-          // 内3列: 914 → 1219 差替、外2列: 305 追加（1セットあたり）
-          swap('短手布材（914）', '短手布材（1219）', 3 * stairBayIdx.length * levels);
-          add('短手布材（305）', 2 * stairBayIdx.length * levels);
-
-          // 階段スパン＋隣接スパンのアンチ 24 → 50 差替
-          const affected = new Set<number>();
-          for (const i of stairBayIdx) {
-            affected.add(i);
-            if (i > 0) affected.add(i - 1);
-            if (i < run.bays.length - 1) affected.add(i + 1);
+          for (const group of groups) {
+            // 内列（セット内の節点 = スパン数+1）: 短手布材 914 → 1219 差替
+            //   2スパンセットで 3列 = sub-alba の「内3列」
+            swap('短手布材（914）', '短手布材（1219）', (group.length + 1) * levels);
+            // 外2列: 914ラインの追加建地に 305 を追加
+            add('短手布材（305）', 2 * levels);
           }
-          for (const i of affected) {
+          // 拡幅範囲（階段セット＋両隣）のアンチ 24 → 50 差替
+          for (const i of widenedBaySet(run.bays)) {
             const span = run.bays[i].span;
             swap(`アンチ（24/${span}）`, `アンチ（50/${span}）`, antiLevels.length);
           }
         } else {
-          add('短手布材（305）', 5 * stairBayIdx.length * levels);
+          add('短手布材（305）', 5 * groups.length * levels);
         }
       }
     }
@@ -383,7 +379,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     totalLengthMm,
     totalHeightMm: heightMm,
     bayCount,
-    stairCount,
+    stairCount: stairSetCount,
     nodeCount,
     pillarText: pillarComboText(pillarCombo),
     transportUnic,

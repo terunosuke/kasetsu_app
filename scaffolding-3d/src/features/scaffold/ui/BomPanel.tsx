@@ -65,7 +65,7 @@ export function BomPanel({ bom }: { bom: Bom }) {
             {bom.stairCount > 0 && (
               <>
                 <span>階段</span>
-                <span className="text-right font-semibold">{bom.stairCount}スパン</span>
+                <span className="text-right font-semibold">{bom.stairCount}セット</span>
               </>
             )}
           </div>

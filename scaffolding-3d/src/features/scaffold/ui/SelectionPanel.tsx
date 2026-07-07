@@ -46,14 +46,19 @@ export function SelectionPanel() {
       </div>
 
       {selection.bayId && (
-        <button
-          className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-          onClick={() => useScaffoldStore.getState().toggleBayStair(run.id, selection.bayId!)}
-        >
-          {run.bays.find((b) => b.id === selection.bayId)?.isStair
-            ? '🪜 階段を解除する'
-            : '🪜 このスパンを階段にする'}
-        </button>
+        <>
+          <button
+            className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+            onClick={() => useScaffoldStore.getState().toggleBayStair(run.id, selection.bayId!)}
+          >
+            {run.bays.find((b) => b.id === selection.bayId)?.isStair
+              ? '🪜 階段を解除する'
+              : '🪜 このスパンを階段にする'}
+          </button>
+          <p className="-mt-1 text-[10px] leading-relaxed text-slate-400">
+            隣り合う2スパンを階段にすると、2スパンで登る斜め階段（千鳥）になります
+          </p>
+        </>
       )}
 
       <div className="max-h-44 overflow-y-auto rounded-md border border-slate-200">
