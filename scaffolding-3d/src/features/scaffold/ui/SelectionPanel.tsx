@@ -53,10 +53,10 @@ export function SelectionPanel() {
           >
             {run.bays.find((b) => b.id === selection.bayId)?.isStair
               ? '🪜 階段を解除する'
-              : '🪜 このスパンを階段にする'}
+              : '🪜 ここに階段を配置する（2スパン使用）'}
           </button>
           <p className="-mt-1 text-[10px] leading-relaxed text-slate-400">
-            隣り合う2スパンを階段にすると、2スパンで登る斜め階段（千鳥）になります
+            階段は隣のスパンとあわせて2スパン1セットで配置され、千鳥に登ります
           </p>
         </>
       )}
