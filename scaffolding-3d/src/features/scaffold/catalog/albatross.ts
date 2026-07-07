@@ -197,9 +197,30 @@ export const DECK_LAYOUT: Record<WidthMM, DeckType[]> = {
   1219: ['50', '50'],
 };
 
-/** アンチ種別 → 実幅（mm）※3D描画用 */
-export const DECK_VISUAL_WIDTH: Record<DeckType, number> = {
-  '24': 240,
-  '40': 400,
-  '50': 490,
+/** アンチ1枚の配置（3D描画用）。center は手前（250側）建地ラインからの距離 */
+export interface DeckPlacement {
+  type: DeckType;
+  widthMm: number;
+  centerMm: number;
+}
+
+/**
+ * 枠幅 → アンチの正確な敷き並べ（sub-alba の3D仕様に準拠）。
+ * 建枠から 50mm クリアを取り、914 は 250+500（隙間64）、1219 は 500×2（隙間119）。
+ * 500幅は常にブレス側（奥側）。配列の最後の要素がブレス側 = 階段が載る位置。
+ */
+export const DECK_PLACEMENT: Record<WidthMM, DeckPlacement[]> = {
+  450: [{ type: '40', widthMm: 400, centerMm: 225 }],
+  610: [{ type: '50', widthMm: 500, centerMm: 300 }],
+  914: [
+    { type: '24', widthMm: 250, centerMm: 175 },
+    { type: '50', widthMm: 500, centerMm: 614 },
+  ],
+  1219: [
+    { type: '50', widthMm: 500, centerMm: 300 },
+    { type: '50', widthMm: 500, centerMm: 919 },
+  ],
 };
+
+/** 階段拡幅時の枠幅（アルバトロス仕様: 914 → 1219） */
+export const WIDENING_WIDTH_MM = 1219;

@@ -337,7 +337,7 @@ export function SettingsPanel({ bom }: { bom: Bom }) {
       </Section>
 
       {/* ============ 階段 ============ */}
-      <Section title="階段" badge={bom.stairCount > 0 ? `${bom.stairCount}スパン` : undefined}>
+      <Section title="階段" badge={bom.stairCount > 0 ? `${bom.stairCount}セット` : undefined}>
         <p className="rounded-md bg-blue-50 px-2 py-1.5 text-[11px] leading-relaxed text-blue-700">
           「選択・編集」モードでスパンをクリック →「階段にする」で配置します
         </p>
