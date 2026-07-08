@@ -1,52 +1,67 @@
 'use client';
 
 /**
- * 1列（Run）分の足場を描画する。
- * 部材単位の寸法・配置は sub-alba の3D仕様（ScaffoldingVisualizer3D）に準拠:
- *   - アンチ敷き並べ: 枠幅ごとに 400 / 500 / 250+500 / 500×2 を実寸クリアで配置
- *   - 階段: 連続2スパン = 斜め型（2段を一気に登る）、単独1スパン = 垂直型。
- *     ブレス側500幅アンチの位置に載り、直上のアンチを段ごとに千鳥で1枚抜く
- *   - 拡幅（枠幅914のみ）: 階段セット＋両隣の計5列が1219幅に拡がり、
- *     外2列の914ラインに追加建地＋短手布材305が入る
+ * 1列（Run）分の足場を描画する。sub-alba の3D仕様に準拠。
+ *
+ * 高さのロジック:
+ *   地面 → ジャッキベース（SB20=200 / SB40=400）→ 根がらみ支柱(+225) = ベース高さ
+ *   ベース高さが「1段目の下端」。アンチは各段の下端に敷き、支柱はベース＋総高さまで。
+ *   例: 3段・最上段900 → 1段目アンチ→1800→2段目アンチ→1800→3段目アンチ→900(頂部)
+ *
+ * 側面の構成（sideMode）:
+ *   braceAndRail: 外面=先行手摺（×型・H900以内）／内面=二段手摺（H450+H900）
+ *   bothRail:     両面とも二段手摺 ／ bothBrace: 両面とも先行手摺
  */
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { Html } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 import { DECK_PLACEMENT, WIDENING_WIDTH_MM } from '../catalog/albatross';
+import { effectivePillarCombo } from '../logic/bom';
+import { pillarJointHeights } from '../model/fitting';
 import {
-  liftHeights,
+  baseOffsetMm,
+  cumulativeHeights,
   nodePoints,
   resolveAntiLevels,
   resolveStairLevels,
   resolveToeboardLevels,
+  runLength,
   stairGroups,
+  totalHeightMm,
   widenedBaySet,
   type GlobalSettings,
   type Run,
   type WidthMM,
 } from '../model/types';
+import type { SelectModifiers } from '../store/useScaffoldStore';
 
 const M = 1 / 1000; // mm → m
 
 // 視覚定数（m）
-const BASE_H = 0.3; // ジャッキベース高さ（この上に支柱が立つ）
 const LEG_R = 0.024;
 const RAIL_R = 0.013;
 const BRACE_R = 0.011;
 const TRANSOM_R = 0.015;
 const DECK_T = 0.045;
+const DECK_LIFT = 0.05; // アンチは段下端から50mm上（短手布材の上）
 const TOE_H = 0.15;
 
 // 色
 const C_LEG = '#5b7b9e';
 const C_JACK = '#3a4654';
+const C_NEGARAMI = '#8a949e';
 const C_RAIL = '#e8762c';
 const C_BRACE = '#9aa5af';
 const C_DECK = '#c8ccd0';
-const C_DECK_NARROW = '#b4bcc4'; // 250幅アンチ（見分け用にわずかに濃く）
+const C_DECK_NARROW = '#b4bcc4';
 const C_TOE = '#d9a62e';
 const C_TRANSOM = '#6b7b8c';
 const C_STAIR = '#808080';
+const C_JOINT = '#1a1a1a';
+const C_WALLTIE = '#e02020';
+const C_NET = '#00bfff';
+const C_SHEET = '#3060c0';
 const HIGHLIGHT = '#3b82f6';
 
 const unitCylinder = new THREE.CylinderGeometry(1, 1, 1, 10);
@@ -74,6 +89,7 @@ function matProps(base: string, paint: Paint): MatProps {
 }
 
 type V3 = [number, number, number];
+type P2 = { x: number; z: number };
 
 /** 2点間に円柱を張る汎用部材 */
 function Bar({ a, b, r, color, paint }: { a: V3; b: V3; r: number; color: string; paint: Paint }) {
@@ -98,23 +114,29 @@ function Box({
   size,
   color,
   paint,
+  transparentOpacity,
 }: {
   center: V3;
   size: V3;
   color: string;
   paint: Paint;
+  /** 素材自体が半透明の部材（ネット・シート） */
+  transparentOpacity?: number;
 }) {
+  const props = matProps(color, paint);
+  if (transparentOpacity !== undefined && paint.opacity === undefined) {
+    props.transparent = true;
+    props.opacity = transparentOpacity;
+    props.depthWrite = false;
+  }
   return (
     <mesh geometry={unitBox} position={center} scale={size}>
-      <meshStandardMaterial {...matProps(color, paint)} />
+      <meshStandardMaterial {...props} side={THREE.DoubleSide} />
     </mesh>
   );
 }
 
-/**
- * 階段フライト（sub-alba 準拠の踏み段列）。
- * from（平面座標・m）から to へ向かって y0 → y1 に登る。
- */
+/** 階段フライト（sub-alba 準拠の踏み段列） */
 function StairFlight({
   from,
   to,
@@ -123,8 +145,8 @@ function StairFlight({
   stepCount,
   paint,
 }: {
-  from: { x: number; z: number };
-  to: { x: number; z: number };
+  from: P2;
+  to: P2;
   y0: number;
   y1: number;
   stepCount: number;
@@ -132,11 +154,11 @@ function StairFlight({
 }) {
   const alongX = Math.abs(to.x - from.x) > Math.abs(to.z - from.z);
   const totalLen = alongX ? Math.abs(to.x - from.x) : Math.abs(to.z - from.z);
-  const clearance = 0.05; // 縦枠とのクリア50mm
+  const clearance = 0.05;
   const usable = totalLen - clearance * 2;
   const stepDepth = usable / stepCount;
   const stepH = (y1 - y0) / stepCount;
-  const stairW = 0.5; // 階段の幅500mm
+  const stairW = 0.5;
   const steps = [];
   for (let i = 0; i < stepCount; i++) {
     const t = (clearance + i * stepDepth + stepDepth / 2) / totalLen;
@@ -156,38 +178,75 @@ function StairFlight({
   return <>{steps}</>;
 }
 
+/** 寸法ラベル（常にカメラ向き・操作を妨げない） */
+function DimLabel({
+  position,
+  text,
+  color,
+}: {
+  position: V3;
+  text: string;
+  color: string;
+}) {
+  return (
+    <Html position={position} center style={{ pointerEvents: 'none' }} zIndexRange={[5, 0]}>
+      <div
+        className="whitespace-nowrap text-[11px] font-bold"
+        style={{ color, textShadow: '0 0 3px #fff, 0 0 3px #fff' }}
+      >
+        {text}
+      </div>
+    </Html>
+  );
+}
+
+/** 段のインデックス集合を all/alternate/custom(先頭N) で解決 */
+function resolveLevelIndices(
+  mode: 'all' | 'alternate' | 'custom',
+  count: number,
+  levels: number,
+): number[] {
+  if (mode === 'all') return Array.from({ length: levels }, (_, i) => i);
+  if (mode === 'alternate') {
+    const out = [];
+    for (let i = 0; i < levels; i += 2) out.push(i);
+    return out;
+  }
+  return Array.from({ length: Math.min(count, levels) }, (_, i) => i);
+}
+
 export function RunParts({
   run,
   settings,
   paint = {},
-  selectedBayId = null,
+  selectedBayIds,
   onPickBay,
   onPickRun,
+  onContextMenu,
 }: {
   run: Pick<Run, 'origin' | 'bays' | 'width'>;
   settings: GlobalSettings;
   paint?: Paint;
-  selectedBayId?: string | null;
-  onPickBay?: (bayId: string) => void;
+  selectedBayIds?: Set<string> | null;
+  onPickBay?: (bayId: string, mods: SelectModifiers) => void;
   /** ベイ以外の部材（支柱・短手布材など）をクリックしたときの列選択 */
   onPickRun?: () => void;
+  /** 右クリック（画面座標つき） */
+  onContextMenu?: (x: number, y: number, bayId: string | null) => void;
 }) {
   const { levels } = settings;
   const w = run.width * M;
-  const frontOff = -w / 2; // 中心線から見た手前（250側）建地ラインのオフセット
+  const frontOff = -w / 2; // 中心線から見た内面（建物側・250アンチ側）建地ラインのオフセット
   const pts = useMemo(() => nodePoints(run).map((p) => ({ x: p.x * M, z: p.z * M })), [run]);
 
-  // 段ごとのデッキ高さ（累積・最上段900対応）
-  const { deckYs, legTop } = useMemo(() => {
-    const heights = liftHeights(settings);
-    const ys: number[] = [];
-    let acc = BASE_H;
-    for (const h of heights) {
-      acc += h * M;
-      ys.push(acc);
-    }
-    return { deckYs: ys, legTop: acc + 0.95 };
-  }, [settings]);
+  // ===== 高さの計算（ベース＋各段下端の累積） =====
+  const baseY = baseOffsetMm(settings) * M;
+  const jackH = settings.jackBaseMode === 'none' ? 0 : (settings.jackBaseOption === 'allSB40' ? 400 : 200) * M;
+  const cums = useMemo(() => cumulativeHeights(settings).map((v) => v * M), [settings]);
+  const totalH = totalHeightMm(settings) * M;
+  const legTop = baseY + totalH;
+  /** 第 level 段（1-based）の下端 = アンチ敷設高さ */
+  const deckY = (level: number) => baseY + cums[level - 1];
 
   const antiSet = useMemo(() => new Set(resolveAntiLevels(settings)), [settings]);
   const toeSet = useMemo(() => new Set(resolveToeboardLevels(settings)), [settings]);
@@ -195,13 +254,22 @@ export function RunParts({
   const toeFaces: number[] =
     settings.toeboardFaces === 'both' ? [-1, 1] : settings.toeboardFaces === 'single' ? [1] : [];
 
-  // ===== 階段セットと拡幅の計算（sub-alba 準拠） =====
+  // 支柱ジョイント位置
+  const jointYs = useMemo(
+    () =>
+      pillarJointHeights(effectivePillarCombo(settings), totalHeightMm(settings)).map(
+        (mm) => baseY + mm * M,
+      ),
+    [settings, baseY],
+  );
+
+  // ===== 階段セットと拡幅（sub-alba 準拠） =====
   const groups = useMemo(() => stairGroups(run.bays), [run.bays]);
   const widening = settings.stairWidening && run.width === 914;
   const { widenedBays, widenedNodes, outerNodes } = useMemo(() => {
     const widenedBays = widening ? widenedBaySet(run.bays) : new Set<number>();
     const widenedNodes = new Set<number>();
-    const outerNodes = new Set<number>(); // 914ラインに追加建地が立つ外列
+    const outerNodes = new Set<number>();
     if (widening) {
       for (let n = 0; n <= run.bays.length; n++) {
         if (widenedBays.has(n - 1) || widenedBays.has(n)) widenedNodes.add(n);
@@ -214,69 +282,101 @@ export function RunParts({
     return { widenedBays, widenedNodes, outerNodes };
   }, [widening, run.bays, groups]);
 
-  const nodeWidthMm = (i: number): number =>
-    widenedNodes.has(i) ? WIDENING_WIDTH_MM : run.width;
+  const nodeWidthMm = (i: number): number => (widenedNodes.has(i) ? WIDENING_WIDTH_MM : run.width);
   const bayWidthMm = (bi: number): WidthMM =>
     (widenedBays.has(bi) ? WIDENING_WIDTH_MM : run.width) as WidthMM;
 
   /**
-   * 千鳥のアンチ開口の位置（`デッキindex:ベイindex`）。
-   * 階段の登り切り床でブレス側500幅アンチを1枚抜く。
-   * 2スパンセットは段ごとに 1スパン目/2スパン目を交互に（千鳥）、
-   * 単独スパン・余り段はそのスパンを抜く（sub-alba 準拠）。
+   * 千鳥のアンチ開口（`段(1-based):ベイindex`）。
+   * 階段（第s段を登る）は第s+1段のアンチに到達するので、そこを開口する。
+   * 2スパンセットは段ごとに交互（千鳥）、単独・余り段は先頭スパン。
    */
   const openings = useMemo(() => {
     const set = new Set<string>();
+    const mark = (s: number, bi: number) => {
+      if (s + 1 <= levels) set.add(`${s + 1}:${bi}`);
+    };
     for (const g of groups) {
       if (g.length === 2) {
         let i = 0;
         while (i < stairLevelList.length - 1) {
           for (const s of [stairLevelList[i], stairLevelList[i + 1]]) {
-            set.add(`${s - 1}:${(s - 1) % 2 === 0 ? g[0] : g[1]}`);
+            mark(s, (s - 1) % 2 === 0 ? g[0] : g[1]);
           }
           i += 2;
         }
-        if (i < stairLevelList.length) set.add(`${stairLevelList[i] - 1}:${g[0]}`);
+        if (i < stairLevelList.length) mark(stairLevelList[i], g[0]);
       } else {
-        for (const s of stairLevelList) set.add(`${s - 1}:${g[0]}`);
+        for (const s of stairLevelList) mark(s, g[0]);
       }
     }
     return set;
-  }, [groups, stairLevelList]);
+  }, [groups, stairLevelList, levels]);
 
-  const hasOpening = (li: number, bi: number): boolean => {
-    if (!openings.has(`${li}:${bi}`)) return false;
+  const hasOpening = (level: number, bi: number): boolean => {
+    if (!openings.has(`${level}:${bi}`)) return false;
     const effW = bayWidthMm(bi);
-    return effW === 914 || effW >= 1219; // sub-alba は 914/1219 のみ開口
+    return effW === 914 || effW >= 1219;
   };
+
+  // オプション部材の設置段
+  const tieLevels = useMemo(
+    () =>
+      settings.wallTieMode !== 'none'
+        ? resolveLevelIndices(settings.wallTieLevelMode, settings.wallTieLevelCount, levels)
+        : [],
+    [settings, levels],
+  );
+  const netLevels = useMemo(
+    () =>
+      settings.layerNet
+        ? resolveLevelIndices(settings.layerNetLevelMode, settings.layerNetLevelCount, levels)
+        : [],
+    [settings, levels],
+  );
+  const sheetUnits = useMemo(() => {
+    if (!settings.sheet) return 0;
+    const sheetLevels = settings.sheetLevelMode === 'all' ? levels : settings.sheetLevelCount;
+    return Math.ceil(Math.max(0, sheetLevels) / 3);
+  }, [settings, levels]);
 
   if (run.bays.length === 0) return null;
 
-  // 各節点における短手方向（進行方向に直交）を求める。
-  // 角の節点は前後どちらかのベイの向きを使う（視覚上の簡略化）。
-  const perpAt = (i: number): { x: number; z: number } => {
+  const showDims = paint.opacity === undefined; // ゴースト時は寸法を出さない
+
+  // 各節点における短手方向（進行方向に直交）
+  const perpAt = (i: number): P2 => {
     const bay = run.bays[Math.min(i, run.bays.length - 1)];
     return { x: -bay.dir.z, z: bay.dir.x };
   };
 
-  /** 節点 i の、手前ラインから d(mm) の位置（m座標） */
-  const nodeAt = (i: number, dMm: number): { x: number; z: number } => {
+  /** 節点 i の、内面ラインから d(mm) の位置（m座標） */
+  const nodeAt = (i: number, dMm: number): P2 => {
     const p = pts[i];
     const perp = perpAt(i);
     const off = frontOff + dMm * M;
     return { x: p.x + perp.x * off, z: p.z + perp.z * off };
   };
 
-  /** 建地1本（ジャッキベース＋支柱） */
-  const Leg = ({ at }: { at: { x: number; z: number } }) => (
+  /** 建地1本（ジャッキベース＋根がらみ＋支柱＋ジョイント） */
+  const Leg = ({ at }: { at: P2 }) => (
     <group>
       {settings.jackBaseMode !== 'none' && (
         <>
-          <Box center={[at.x, 0.02, at.z]} size={[0.13, 0.04, 0.13]} color={C_JACK} paint={paint} />
-          <Bar a={[at.x, 0.04, at.z]} b={[at.x, BASE_H, at.z]} r={0.017} color={C_JACK} paint={paint} />
+          <Box center={[at.x, 0.015, at.z]} size={[0.16, 0.03, 0.16]} color={C_JACK} paint={paint} />
+          <Bar a={[at.x, 0.03, at.z]} b={[at.x, jackH, at.z]} r={0.017} color={C_JACK} paint={paint} />
+          {settings.negarami && (
+            <Bar a={[at.x, jackH, at.z]} b={[at.x, baseY, at.z]} r={LEG_R} color={C_NEGARAMI} paint={paint} />
+          )}
         </>
       )}
-      <Bar a={[at.x, BASE_H, at.z]} b={[at.x, legTop, at.z]} r={LEG_R} color={C_LEG} paint={paint} />
+      <Bar a={[at.x, baseY, at.z]} b={[at.x, legTop, at.z]} r={LEG_R} color={C_LEG} paint={paint} />
+      {/* 支柱ジョイント（黒い円盤） */}
+      {jointYs.map((jy, ji) => (
+        <mesh key={ji} geometry={unitCylinder} position={[at.x, jy, at.z]} scale={[0.11, 0.025, 0.11]}>
+          <meshStandardMaterial {...matProps(C_JOINT, paint)} />
+        </mesh>
+      ))}
     </group>
   );
 
@@ -290,46 +390,64 @@ export function RunParts({
             }
           : undefined
       }
+      onContextMenu={
+        onContextMenu
+          ? (e: ThreeEvent<MouseEvent>) => {
+              e.stopPropagation();
+              e.nativeEvent.preventDefault();
+              onContextMenu(e.nativeEvent.clientX, e.nativeEvent.clientY, null);
+            }
+          : undefined
+      }
     >
-      {/* ===== 節点ごと: 建地・短手布材・妻側部材（拡幅対応） ===== */}
+      {/* ===== 節点ごと: 建地・短手布材・妻側部材・壁つなぎ（拡幅対応） ===== */}
       {pts.map((_, i) => {
         const nodeW = nodeWidthMm(i);
         const front = nodeAt(i, 0);
         const back = nodeAt(i, nodeW);
         const isOuterWidened = widening && outerNodes.has(i) && widenedNodes.has(i);
         const mid914 = isOuterWidened ? nodeAt(i, 914) : null;
-        // 妻側: 0面=なし / 1面=始端のみ / 2面=両端
         const isTsumaEnd =
           (settings.tsumaCount >= 1 && i === 0) ||
           (settings.tsumaCount >= 2 && i === pts.length - 1);
+        // 壁つなぎ: 設置スパン（節点）判定
+        const tieHere =
+          settings.wallTieMode !== 'none' &&
+          (settings.wallTieSpanMode === 'all'
+            ? true
+            : settings.wallTieSpanMode === 'alternate'
+              ? i % 2 === 0
+              : i < settings.wallTieSpanCount);
         return (
           <group key={i}>
             <Leg at={front} />
             <Leg at={back} />
-            {/* 拡幅の外列: 914ラインに追加建地 */}
             {mid914 && <Leg at={mid914} />}
-            {/* 短手布材（各段のアンチ受け）。外列は 914 + 305 の2分割 */}
-            {deckYs.map((y, li) => (
-              <group key={li}>
-                {mid914 ? (
-                  <>
-                    <Bar a={[front.x, y, front.z]} b={[mid914.x, y, mid914.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
-                    <Bar a={[mid914.x, y, mid914.z]} b={[back.x, y, back.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
-                  </>
-                ) : (
-                  <Bar a={[front.x, y, front.z]} b={[back.x, y, back.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
-                )}
-              </group>
-            ))}
-            {/* 妻側手すり・妻側巾木（アンチ設置段に付く） */}
+            {/* 短手布材（各段の下端）。拡幅の外列は 914 + 305 の2分割 */}
+            {Array.from({ length: levels }, (_, li) => {
+              const y = deckY(li + 1);
+              return (
+                <group key={li}>
+                  {mid914 ? (
+                    <>
+                      <Bar a={[front.x, y, front.z]} b={[mid914.x, y, mid914.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
+                      <Bar a={[mid914.x, y, mid914.z]} b={[back.x, y, back.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
+                    </>
+                  ) : (
+                    <Bar a={[front.x, y, front.z]} b={[back.x, y, back.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
+                  )}
+                </group>
+              );
+            })}
+            {/* 妻側手すり・妻側巾木（アンチ設置段の下端基準） */}
             {isTsumaEnd &&
-              deckYs.map((deckY, li) =>
+              Array.from({ length: levels }, (_, li) =>
                 antiSet.has(li + 1) ? (
                   <group key={li}>
-                    <Bar a={[front.x, deckY + 0.45, front.z]} b={[back.x, deckY + 0.45, back.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
-                    <Bar a={[front.x, deckY + 0.9, front.z]} b={[back.x, deckY + 0.9, back.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                    <Bar a={[front.x, deckY(li + 1) + 0.45, front.z]} b={[back.x, deckY(li + 1) + 0.45, back.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                    <Bar a={[front.x, deckY(li + 1) + 0.9, front.z]} b={[back.x, deckY(li + 1) + 0.9, back.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
                     <Box
-                      center={[(front.x + back.x) / 2, deckY + TOE_H / 2 + DECK_T, (front.z + back.z) / 2]}
+                      center={[(front.x + back.x) / 2, deckY(li + 1) + DECK_LIFT + DECK_T + TOE_H / 2, (front.z + back.z) / 2]}
                       size={[Math.abs(back.x - front.x) || 0.015, TOE_H, Math.abs(back.z - front.z) || 0.015]}
                       color={C_TOE}
                       paint={paint}
@@ -337,23 +455,33 @@ export function RunParts({
                   </group>
                 ) : null,
               )}
+            {/* 壁つなぎ（内面＝建物側、段の中間高さに赤球） */}
+            {tieHere &&
+              tieLevels.map((li) => (
+                <mesh
+                  key={`tie-${li}`}
+                  position={[front.x, baseY + (cums[li] + cums[li + 1]) / 2, front.z]}
+                >
+                  <sphereGeometry args={[0.08, 12, 12]} />
+                  <meshStandardMaterial {...matProps(C_WALLTIE, paint)} />
+                </mesh>
+              ))}
           </group>
         );
       })}
 
-      {/* ===== ベイ（スパン）ごと: アンチ・手すり・ブレス・巾木 ===== */}
+      {/* ===== ベイ（スパン）ごと ===== */}
       {run.bays.map((bay, bi) => {
         const a = pts[bi];
         const b = pts[bi + 1];
         const spanLen = bay.span * M;
-        const alongX = bay.dir.z === 0; // スパンが X 軸方向か
+        const alongX = bay.dir.z === 0;
         const perp = { x: -bay.dir.z, z: bay.dir.x };
-        const bayPaint: Paint =
-          selectedBayId === bay.id && paint.opacity === undefined ? { tint: HIGHLIGHT } : paint;
+        const isSelected = selectedBayIds?.has(bay.id) ?? false;
+        const bayPaint: Paint = isSelected && paint.opacity === undefined ? { tint: HIGHLIGHT } : paint;
         const effW = bayWidthMm(bi);
         const placements = DECK_PLACEMENT[effW];
-        const backOffMm = effW; // このベイの奥側（ブレス側）ライン
-        /** ベイ内で手前ラインから d(mm) オフセットした2点 */
+        const backOffMm = effW;
         const lineAt = (dMm: number) => {
           const off = frontOff + dMm * M;
           return {
@@ -361,6 +489,14 @@ export function RunParts({
             b: { x: b.x + perp.x * off, z: b.z + perp.z * off },
           };
         };
+        const frontLine = lineAt(0);
+        const backLine = lineAt(backOffMm);
+        const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+
+        // 側面構成: 面ごとに ブレス(×) or 二段手摺
+        const faceIsBrace = (side: 1 | -1): boolean =>
+          settings.sideMode === 'bothBrace' ||
+          (settings.sideMode === 'braceAndRail' && side === 1); // 外面(+)=ブレス
 
         return (
           <group
@@ -369,25 +505,35 @@ export function RunParts({
               onPickBay
                 ? (e: ThreeEvent<MouseEvent>) => {
                     e.stopPropagation();
-                    onPickBay(bay.id);
+                    onPickBay(bay.id, {
+                      shift: e.nativeEvent.shiftKey,
+                      ctrl: e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+                    });
+                  }
+                : undefined
+            }
+            onContextMenu={
+              onContextMenu
+                ? (e: ThreeEvent<MouseEvent>) => {
+                    e.stopPropagation();
+                    e.nativeEvent.preventDefault();
+                    onContextMenu(e.nativeEvent.clientX, e.nativeEvent.clientY, bay.id);
                   }
                 : undefined
             }
           >
-            {deckYs.map((deckY, li) => {
+            {Array.from({ length: levels }, (_, li) => {
               const level = li + 1;
-              const y0 = li === 0 ? BASE_H : deckYs[li - 1];
+              const y0 = deckY(level); // 段の下端
               const hasDeck = antiSet.has(level);
               const hasToe = toeSet.has(level);
-              const opening = hasDeck && hasOpening(li, bi);
-              const frontLine = lineAt(0);
-              const backLine = lineAt(backOffMm);
+              const opening = hasDeck && hasOpening(level, bi);
               return (
                 <group key={li}>
-                  {/* アンチ（枠幅ごとの正確な敷き並べ。開口時はブレス側500を抜く） */}
+                  {/* アンチ（段の下端に敷設。開口時はブレス側500を抜く） */}
                   {hasDeck &&
                     placements.map((pl, pi) => {
-                      if (opening && pi === placements.length - 1) return null; // 千鳥開口
+                      if (opening && pi === placements.length - 1) return null;
                       const line = lineAt(pl.centerMm);
                       const cx = (line.a.x + line.b.x) / 2;
                       const cz = (line.a.z + line.b.z) / 2;
@@ -395,43 +541,34 @@ export function RunParts({
                       return (
                         <Box
                           key={pi}
-                          center={[cx, deckY + DECK_T / 2, cz]}
+                          center={[cx, y0 + DECK_LIFT + DECK_T / 2, cz]}
                           size={alongX ? [spanLen * 0.97, DECK_T, dw] : [dw, DECK_T, spanLen * 0.97]}
                           color={pl.widthMm <= 250 ? C_DECK_NARROW : C_DECK}
                           paint={bayPaint}
                         />
                       );
                     })}
-                  {/* 長手手すり（手前・奥 各1本） */}
-                  {[frontLine, backLine].map((line, k) => (
-                    <Bar
-                      key={k}
-                      a={[line.a.x, deckY + 0.9, line.a.z]}
-                      b={[line.b.x, deckY + 0.9, line.b.z]}
-                      r={RAIL_R}
-                      color={C_RAIL}
-                      paint={bayPaint}
-                    />
-                  ))}
-                  {/* ブレス（奥側・段ごとに向き交互）※階段スパンには表示しない */}
-                  {!bay.isStair && (
-                    <Bar
-                      a={[
-                        level % 2 === 1 ? backLine.a.x : backLine.b.x,
-                        y0 + 0.1,
-                        level % 2 === 1 ? backLine.a.z : backLine.b.z,
-                      ]}
-                      b={[
-                        level % 2 === 1 ? backLine.b.x : backLine.a.x,
-                        deckY - 0.1,
-                        level % 2 === 1 ? backLine.b.z : backLine.a.z,
-                      ]}
-                      r={BRACE_R}
-                      color={C_BRACE}
-                      paint={bayPaint}
-                    />
-                  )}
-                  {/* 巾木（面数設定に応じて手前/奥） */}
+                  {/* 側面（内面-1 / 外面+1） */}
+                  {([-1, 1] as const).map((side) => {
+                    const line = side === -1 ? frontLine : backLine;
+                    if (faceIsBrace(side)) {
+                      // 先行手摺: ×型（H900以内）※階段スパンの外面のみ省略しない=sub-alba同様表示
+                      return (
+                        <group key={side}>
+                          <Bar a={[line.a.x, y0 + 0.05, line.a.z]} b={[line.b.x, y0 + 0.9, line.b.z]} r={BRACE_R} color={C_BRACE} paint={bayPaint} />
+                          <Bar a={[line.b.x, y0 + 0.05, line.b.z]} b={[line.a.x, y0 + 0.9, line.a.z]} r={BRACE_R} color={C_BRACE} paint={bayPaint} />
+                        </group>
+                      );
+                    }
+                    // 二段手摺: H450 + H900
+                    return (
+                      <group key={side}>
+                        <Bar a={[line.a.x, y0 + 0.45, line.a.z]} b={[line.b.x, y0 + 0.45, line.b.z]} r={RAIL_R} color={C_RAIL} paint={bayPaint} />
+                        <Bar a={[line.a.x, y0 + 0.9, line.a.z]} b={[line.b.x, y0 + 0.9, line.b.z]} r={RAIL_R} color={C_RAIL} paint={bayPaint} />
+                      </group>
+                    );
+                  })}
+                  {/* 巾木 */}
                   {hasToe &&
                     toeFaces.map((side) => {
                       const line = lineAt(side === -1 ? 12 : backOffMm - 12);
@@ -440,99 +577,153 @@ export function RunParts({
                       return (
                         <Box
                           key={side}
-                          center={[cx, deckY + DECK_T + TOE_H / 2, cz]}
+                          center={[cx, y0 + DECK_LIFT + DECK_T + TOE_H / 2, cz]}
                           size={alongX ? [spanLen * 0.98, TOE_H, 0.015] : [0.015, TOE_H, spanLen * 0.98]}
                           color={C_TOE}
                           paint={bayPaint}
                         />
                       );
                     })}
+                  {/* 層間ネット（内面から建物側へ300mm跳ね出し・段の上端） */}
+                  {netLevels.includes(li) && (
+                    <Box
+                      center={[
+                        mid.x + perp.x * (frontOff - 0.15),
+                        baseY + cums[li + 1],
+                        mid.z + perp.z * (frontOff - 0.15),
+                      ]}
+                      size={alongX ? [spanLen, 0.01, 0.3] : [0.3, 0.01, spanLen]}
+                      color={C_NET}
+                      paint={paint}
+                      transparentOpacity={0.5}
+                    />
+                  )}
                 </group>
               );
             })}
+            {/* 外周メッシュシート（外面・5400mm単位で積む） */}
+            {Array.from({ length: sheetUnits }, (_, si) => {
+              const unitH = 5.4;
+              const bottom = baseY + si * unitH;
+              const top = Math.min(bottom + unitH, legTop);
+              if (top - bottom <= 0.01) return null;
+              const line = lineAt(backOffMm + 40);
+              const cx = (line.a.x + line.b.x) / 2;
+              const cz = (line.a.z + line.b.z) / 2;
+              return (
+                <Box
+                  key={`sheet-${si}`}
+                  center={[cx, (bottom + top) / 2, cz]}
+                  size={alongX ? [spanLen, top - bottom, 0.006] : [0.006, top - bottom, spanLen]}
+                  color={C_SHEET}
+                  paint={paint}
+                  transparentOpacity={0.3}
+                />
+              );
+            })}
+            {/* スパン寸法（地面・内面側） */}
+            {showDims && (
+              <DimLabel
+                position={[
+                  mid.x + perp.x * (frontOff - 0.5),
+                  0.02,
+                  mid.z + perp.z * (frontOff - 0.5),
+                ]}
+                text={`${bay.span}`}
+                color="#d02020"
+              />
+            )}
           </group>
         );
       })}
+
+      {/* ===== 妻側メッシュシート（列の端部） ===== */}
+      {settings.sheet &&
+        settings.tsumaSheetCount > 0 &&
+        [0, pts.length - 1]
+          .filter((_, k) => (k === 0 ? settings.tsumaSheetCount >= 1 : settings.tsumaSheetCount >= 2))
+          .map((ni) => {
+            const nodeW = nodeWidthMm(ni);
+            const front = nodeAt(ni, -40);
+            const back = nodeAt(ni, nodeW + 40);
+            const cx = (front.x + back.x) / 2;
+            const cz = (front.z + back.z) / 2;
+            const depth = Math.hypot(back.x - front.x, back.z - front.z);
+            const bay = run.bays[Math.min(ni, run.bays.length - 1)];
+            const alongX = bay.dir.z === 0;
+            return Array.from({ length: sheetUnits }, (_, si) => {
+              const unitH = 5.4;
+              const bottom = baseY + si * unitH;
+              const top = Math.min(bottom + unitH, legTop);
+              if (top - bottom <= 0.01) return null;
+              return (
+                <Box
+                  key={`tsheet-${ni}-${si}`}
+                  center={[cx, (bottom + top) / 2, cz]}
+                  size={alongX ? [0.006, top - bottom, depth] : [depth, top - bottom, 0.006]}
+                  color={C_SHEET}
+                  paint={paint}
+                  transparentOpacity={0.3}
+                />
+              );
+            });
+          })}
 
       {/* ===== 階段（セットごと: 2スパン=斜め型 / 1スパン=垂直型） ===== */}
       {groups.map((g, gi) => {
         const firstBay = run.bays[g[0]];
         const effW = bayWidthMm(g[0]);
-        // 階段はブレス側500幅アンチの位置に載る（914:614 / 1219:919 / その他:最奥アンチ中心）
         const pls = DECK_PLACEMENT[effW];
         const stairCenterMm = pls[pls.length - 1].centerMm;
+        const lineEnd = (nodeIdx: number, bayIdx: number): P2 => {
+          const p = pts[nodeIdx];
+          const perp = perpAt(bayIdx);
+          const off = frontOff + stairCenterMm * M;
+          return { x: p.x + perp.x * off, z: p.z + perp.z * off };
+        };
         const flights = [];
 
         if (g.length === 2) {
-          // 斜め型: 階段設置段を2段ずつペアにして、2スパンで一気に登る
           let i = 0;
           while (i < stairLevelList.length - 1) {
             const s1 = stairLevelList[i];
             const s2 = stairLevelList[i + 1];
-            const from = (() => {
-              const p = pts[g[0]];
-              const perp = perpAt(g[0]);
-              const off = frontOff + stairCenterMm * M;
-              return { x: p.x + perp.x * off, z: p.z + perp.z * off };
-            })();
-            const to = (() => {
-              const p = pts[g[1] + 1];
-              const perp = perpAt(g[1]);
-              const off = frontOff + stairCenterMm * M;
-              return { x: p.x + perp.x * off, z: p.z + perp.z * off };
-            })();
             flights.push(
               <StairFlight
                 key={`d${i}`}
-                from={from}
-                to={to}
-                y0={s1 === 1 ? BASE_H : deckYs[s1 - 2]}
-                y1={deckYs[s2 - 1]}
+                from={lineEnd(g[0], g[0])}
+                to={lineEnd(g[1] + 1, g[1])}
+                y0={deckY(s1)}
+                y1={deckY(Math.min(s2 + 1, levels + 1))}
                 stepCount={16}
                 paint={paint}
               />,
             );
             i += 2;
           }
-          // 余った段は垂直型（1スパン目）
           if (i < stairLevelList.length) {
             const s = stairLevelList[i];
-            const from = nodeAt(g[0], stairCenterMm);
-            const to = (() => {
-              const p = pts[g[0] + 1];
-              const perp = perpAt(g[0]);
-              const off = frontOff + stairCenterMm * M;
-              return { x: p.x + perp.x * off, z: p.z + perp.z * off };
-            })();
             flights.push(
               <StairFlight
                 key={`v${i}`}
-                from={from}
-                to={to}
-                y0={s === 1 ? BASE_H : deckYs[s - 2]}
-                y1={deckYs[s - 1]}
+                from={lineEnd(g[0], g[0])}
+                to={lineEnd(g[0] + 1, g[0])}
+                y0={deckY(s)}
+                y1={deckY(Math.min(s + 1, levels + 1))}
                 stepCount={8}
                 paint={paint}
               />,
             );
           }
         } else {
-          // 垂直型: 各設置段に1フライト
           for (const s of stairLevelList) {
-            const from = nodeAt(g[0], stairCenterMm);
-            const to = (() => {
-              const p = pts[g[0] + 1];
-              const perp = perpAt(g[0]);
-              const off = frontOff + stairCenterMm * M;
-              return { x: p.x + perp.x * off, z: p.z + perp.z * off };
-            })();
             flights.push(
               <StairFlight
                 key={`v${s}`}
-                from={from}
-                to={to}
-                y0={s === 1 ? BASE_H : deckYs[s - 2]}
-                y1={deckYs[s - 1]}
+                from={lineEnd(g[0], g[0])}
+                to={lineEnd(g[0] + 1, g[0])}
+                y0={deckY(s)}
+                y1={deckY(Math.min(s + 1, levels + 1))}
                 stepCount={8}
                 paint={paint}
               />,
@@ -547,7 +738,10 @@ export function RunParts({
               onPickBay
                 ? (e: ThreeEvent<MouseEvent>) => {
                     e.stopPropagation();
-                    onPickBay(firstBay.id);
+                    onPickBay(firstBay.id, {
+                      shift: e.nativeEvent.shiftKey,
+                      ctrl: e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+                    });
                   }
                 : undefined
             }
@@ -556,6 +750,31 @@ export function RunParts({
           </group>
         );
       })}
+
+      {/* ===== 枠幅・拡幅の寸法表示（列の始端の手前） ===== */}
+      {showDims &&
+        (() => {
+          const p0 = pts[0];
+          const d0 = run.bays[0].dir;
+          const labelPos: V3 = [p0.x - d0.x * 0.9, 0.8, p0.z - d0.z * 0.9];
+          return (
+            <group>
+              <DimLabel position={labelPos} text={`${run.width}枠`} color="#2040d0" />
+              {widening && (
+                <DimLabel
+                  position={[labelPos[0], 1.15, labelPos[2]]}
+                  text="階段部1219拡幅"
+                  color="#e08000"
+                />
+              )}
+              <DimLabel
+                position={[p0.x - d0.x * 0.9, 0.45, p0.z - d0.z * 0.9]}
+                text={`全長${runLength(run).toLocaleString()}`}
+                color="#d02020"
+              />
+            </group>
+          );
+        })()}
     </group>
   );
 }

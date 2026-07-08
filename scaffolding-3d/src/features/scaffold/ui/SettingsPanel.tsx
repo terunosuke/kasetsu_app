@@ -167,6 +167,18 @@ export function SettingsPanel({ bom }: { bom: Bom }) {
             <option value={2}>2面（両端）</option>
           </select>
         </div>
+        <div className={rowCls}>
+          <span className={labelCls}>側面の構成</span>
+          <select
+            className={selectCls}
+            value={s.sideMode}
+            onChange={(e) => update({ sideMode: e.target.value as GlobalSettings['sideMode'] })}
+          >
+            <option value="braceAndRail">先行手摺＋二段手摺</option>
+            <option value="bothRail">両面二段手摺</option>
+            <option value="bothBrace">両面先行手摺</option>
+          </select>
+        </div>
       </Section>
 
       {/* ============ 支柱・ジャッキ ============ */}
