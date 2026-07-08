@@ -64,6 +64,29 @@ export function pillarComboFor(heightMm: number): Record<number, number> {
   return combo;
 }
 
+/**
+ * 支柱のジョイント高さ（mm・ベースからの累積）を計算する。
+ * 長い支柱から順に積み上げ、総高さ未満の継ぎ目位置を返す（sub-alba 準拠）。
+ */
+export function pillarJointHeights(
+  combo: Record<number, number>,
+  totalMm: number,
+): number[] {
+  const lengths: number[] = [];
+  for (const [len, count] of Object.entries(combo)) {
+    for (let i = 0; i < count; i++) lengths.push(Number(len));
+  }
+  lengths.sort((a, b) => b - a);
+  const joints: number[] = [];
+  let acc = 0;
+  for (const len of lengths) {
+    acc += len;
+    if (acc < totalMm) joints.push(acc);
+    else break;
+  }
+  return joints;
+}
+
 /** スパン構成の表示用テキスト（例: "1829×3 + 914×1"） */
 export function spanBreakdownText(spans: SpanMM[]): string {
   const counts = new Map<SpanMM, number>();

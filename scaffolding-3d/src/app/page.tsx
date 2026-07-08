@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { computeBom } from '@/features/scaffold/logic/bom';
 import { useScaffoldStore } from '@/features/scaffold/store/useScaffoldStore';
 import { BomPanel } from '@/features/scaffold/ui/BomPanel';
+import { ContextMenu } from '@/features/scaffold/ui/ContextMenu';
 import { SelectionPanel } from '@/features/scaffold/ui/SelectionPanel';
 import { SettingsPanel } from '@/features/scaffold/ui/SettingsPanel';
 import { Toolbar } from '@/features/scaffold/ui/Toolbar';
@@ -33,7 +34,8 @@ function HintBar() {
       text = 'クリックで区間を確定して続行 ／ ダブルクリック・Esc・Enter で列を完成';
     }
   } else {
-    text = '足場をクリックして選択（左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=ズーム）';
+    text =
+      '足場をクリックで選択（Ctrl=追加 / Shift=範囲）／ 右クリック=編集メニュー ／ 左ドラッグ=回転';
   }
 
   return (
@@ -83,6 +85,9 @@ export default function Home() {
       <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
         <HintBar />
       </div>
+
+      {/* 右クリックメニュー */}
+      <ContextMenu />
     </div>
   );
 }

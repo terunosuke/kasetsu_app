@@ -136,6 +136,9 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   const stairLevels = resolveStairLevels(s);
   const toeFaces = s.toeboardFaces === 'both' ? 2 : s.toeboardFaces === 'single' ? 1 : 0;
   const pillarCombo = effectivePillarCombo(s);
+  // 側面構成 → 1スパン1段あたりの手すり本数（二段手摺=2本/面）とブレス本数（×型=1本/面）
+  const railsPerBayLevel = s.sideMode === 'bothRail' ? 4 : s.sideMode === 'braceAndRail' ? 2 : 0;
+  const bracesPerBayLevel = s.sideMode === 'bothBrace' ? 2 : s.sideMode === 'braceAndRail' ? 1 : 0;
 
   let totalLengthMm = 0;
   let bayCount = 0;
@@ -157,8 +160,8 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     if (s.jackBaseMode !== 'none' && s.negarami) add('根がらみ支柱', legs);
 
     for (const bay of run.bays) {
-      add(`長手手すり（${bay.span}）`, levels * 2);
-      add(`ブレス（${bay.span}）`, levels);
+      add(`長手手すり（${bay.span}）`, levels * railsPerBayLevel);
+      add(`ブレス（${bay.span}）`, levels * bracesPerBayLevel);
       if (toeFaces > 0) add(`巾木（${bay.span}）`, toeLevels.length * toeFaces);
       for (const deckType of DECK_LAYOUT[run.width]) {
         add(`アンチ（${deckType}/${bay.span}）`, antiLevels.length);

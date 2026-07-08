@@ -12,13 +12,18 @@ export function SelectionPanel() {
   const run = runs.find((r) => r.id === selection?.runId);
   if (!selection || !run) return null;
 
+  const selectedIds = selection.bayIds;
+  const st = () => useScaffoldStore.getState();
+
   return (
     <div className="flex max-h-[32%] shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl bg-white/95 p-3 shadow-lg ring-1 ring-blue-200">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-blue-700">選択中の列</h2>
+        <h2 className="text-sm font-bold text-blue-700">
+          選択中の列{selectedIds.length > 0 && `（${selectedIds.length}スパン選択）`}
+        </h2>
         <button
           className="text-xs text-slate-400 hover:text-slate-600"
-          onClick={() => useScaffoldStore.getState().select(null)}
+          onClick={() => st().clearSelection()}
         >
           ✕ 解除
         </button>
@@ -27,15 +32,16 @@ export function SelectionPanel() {
       <p className="text-xs text-slate-500">
         全長 {runLength(run).toLocaleString()}mm ／ {run.bays.length}スパン
       </p>
+      <p className="-mt-1.5 text-[10px] leading-relaxed text-slate-400">
+        Ctrl+クリック=追加選択 ／ Shift+クリック=範囲選択 ／ 右クリック=編集メニュー
+      </p>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm text-slate-600">この列の枠幅</span>
         <select
           className={selectCls}
           value={run.width}
-          onChange={(e) =>
-            useScaffoldStore.getState().setRunWidth(run.id, Number(e.target.value) as WidthMM)
-          }
+          onChange={(e) => st().setRunWidth(run.id, Number(e.target.value) as WidthMM)}
         >
           {WIDTHS.map((w) => (
             <option key={w} value={w}>
@@ -45,32 +51,64 @@ export function SelectionPanel() {
         </select>
       </div>
 
-      {selection.bayId && (
+      {selectedIds.length > 0 && (
         <>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-slate-600">選択スパンのサイズ</span>
+            <select
+              className={selectCls}
+              value=""
+              onChange={(e) => {
+                if (e.target.value) {
+                  st().setSpanForBays(run.id, selectedIds, Number(e.target.value) as SpanMM);
+                }
+              }}
+            >
+              <option value="">変更...</option>
+              {SPANS.map((s) => (
+                <option key={s} value={s}>
+                  {s}mm
+                </option>
+              ))}
+            </select>
+          </div>
           <button
             className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-            onClick={() => useScaffoldStore.getState().toggleBayStair(run.id, selection.bayId!)}
+            onClick={() => {
+              const allStair = run.bays
+                .filter((b) => selectedIds.includes(b.id))
+                .every((b) => b.isStair);
+              st().setStairForBays(run.id, selectedIds, !allStair);
+            }}
           >
-            {run.bays.find((b) => b.id === selection.bayId)?.isStair
-              ? '🪜 階段を解除する'
-              : '🪜 ここに階段を配置する（2スパン使用）'}
+            🪜{' '}
+            {run.bays.filter((b) => selectedIds.includes(b.id)).every((b) => b.isStair)
+              ? '階段を解除する'
+              : selectedIds.length === 1
+                ? 'ここに階段を配置する（2スパン使用）'
+                : '選択スパンを階段にする'}
           </button>
           <p className="-mt-1 text-[10px] leading-relaxed text-slate-400">
-            階段は隣のスパンとあわせて2スパン1セットで配置され、千鳥に登ります
+            階段は2スパン1セットで斜めに登ります（1スパン選択時は隣と自動ペア）
           </p>
         </>
       )}
 
       <div className="max-h-44 overflow-y-auto rounded-md border border-slate-200">
         {run.bays.map((bay, i) => {
-          const isSelected = selection.bayId === bay.id;
+          const isSelected = selectedIds.includes(bay.id);
           return (
             <div
               key={bay.id}
               className={`flex items-center justify-between gap-2 border-b border-slate-100 px-2 py-1 last:border-b-0 ${
                 isSelected ? 'bg-blue-50' : ''
               }`}
-              onClick={() => useScaffoldStore.getState().select({ runId: run.id, bayId: bay.id })}
+              onClick={(e) =>
+                st().selectBay(run.id, bay.id, {
+                  shift: e.shiftKey,
+                  ctrl: e.ctrlKey || e.metaKey,
+                })
+              }
             >
               <span className="text-xs text-slate-500">
                 #{i + 1}
@@ -79,11 +117,8 @@ export function SelectionPanel() {
               <select
                 className={selectCls}
                 value={bay.span}
-                onChange={(e) =>
-                  useScaffoldStore
-                    .getState()
-                    .setBaySpan(run.id, bay.id, Number(e.target.value) as SpanMM)
-                }
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => st().setBaySpan(run.id, bay.id, Number(e.target.value) as SpanMM)}
               >
                 {SPANS.map((s) => (
                   <option key={s} value={s}>
@@ -96,7 +131,7 @@ export function SelectionPanel() {
                 title="このスパンを削除"
                 onClick={(e) => {
                   e.stopPropagation();
-                  useScaffoldStore.getState().deleteBay(run.id, bay.id);
+                  st().deleteBay(run.id, bay.id);
                 }}
               >
                 削除
@@ -108,7 +143,7 @@ export function SelectionPanel() {
 
       <button
         className="rounded-lg bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-100"
-        onClick={() => useScaffoldStore.getState().deleteRun(run.id)}
+        onClick={() => st().deleteRun(run.id)}
       >
         🗑️ この列を削除
       </button>

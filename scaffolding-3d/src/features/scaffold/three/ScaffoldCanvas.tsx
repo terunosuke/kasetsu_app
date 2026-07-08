@@ -3,7 +3,7 @@
 /**
  * 3Dキャンバス本体。
  * 組み立てモード: 地面をクリック → なぞる → クリックで確定 → ダブルクリック/Esc で列完成。
- * 選択モード: 部材クリックで列・スパンを選択。左ドラッグで視点回転。
+ * 選択モード: 部材クリックで選択（Ctrl=追加 / Shift=範囲）、右クリックで編集メニュー。
  * どちらのモードでも 右ドラッグ=回転 / ホイール=ズーム が使える。
  */
 import { useEffect, useMemo } from 'react';
@@ -29,10 +29,14 @@ function GroundPlane() {
       onClick={(e: ThreeEvent<MouseEvent>) => {
         if (e.delta > 5) return; // ドラッグ（視点操作）後のクリックは無視
         const s = useScaffoldStore.getState();
+        if (s.contextMenu) {
+          s.closeContextMenu();
+          return;
+        }
         if (s.mode === 'build') {
           s.pointerClick({ x: e.point.x * 1000, z: e.point.z * 1000 });
         } else {
-          s.select(null);
+          s.clearSelection();
         }
       }}
       onDoubleClick={() => {
@@ -92,37 +96,55 @@ function PlacedRuns() {
 
   return (
     <>
-      {runs.map((run) => (
-        <group key={run.id}>
-          <RunParts
-            run={run}
-            settings={settings}
-            selectedBayId={selection?.runId === run.id ? selection.bayId : null}
-            onPickBay={
-              mode === 'select'
-                ? (bayId) => useScaffoldStore.getState().select({ runId: run.id, bayId })
-                : undefined
-            }
-            onPickRun={
-              mode === 'select'
-                ? () => useScaffoldStore.getState().select({ runId: run.id, bayId: null })
-                : undefined
-            }
-          />
-          {/* 選択中の列の全長ラベル */}
-          {selection?.runId === run.id && (
-            <Html
-              position={[run.origin.x * M, settings.levels * 1.8 + 1.6, run.origin.z * M]}
-              center
-              style={{ pointerEvents: 'none' }}
-            >
-              <div className="whitespace-nowrap rounded-md bg-slate-800/90 px-2 py-1 text-xs font-semibold text-white shadow">
-                全長 {runLength(run).toLocaleString()}mm ／ 枠幅 {run.width}
-              </div>
-            </Html>
-          )}
-        </group>
-      ))}
+      {runs.map((run) => {
+        const isSelected = selection?.runId === run.id;
+        const selectedBayIds = isSelected ? new Set(selection.bayIds) : null;
+        return (
+          <group key={run.id}>
+            <RunParts
+              run={run}
+              settings={settings}
+              selectedBayIds={selectedBayIds}
+              onPickBay={
+                mode === 'select'
+                  ? (bayId, mods) => useScaffoldStore.getState().selectBay(run.id, bayId, mods)
+                  : undefined
+              }
+              onPickRun={
+                mode === 'select' ? () => useScaffoldStore.getState().selectRun(run.id) : undefined
+              }
+              onContextMenu={
+                mode === 'select'
+                  ? (x, y, bayId) => {
+                      const st = useScaffoldStore.getState();
+                      // 未選択の列を右クリックしたら、その列（＋ベイ）を選択してからメニュー
+                      if (st.selection?.runId !== run.id) {
+                        if (bayId) st.selectBay(run.id, bayId);
+                        else st.selectRun(run.id);
+                      } else if (bayId && !st.selection.bayIds.includes(bayId)) {
+                        st.selectBay(run.id, bayId);
+                      }
+                      st.openContextMenu({ x, y, runId: run.id });
+                    }
+                  : undefined
+              }
+            />
+            {/* 選択中の列の全長ラベル */}
+            {isSelected && (
+              <Html
+                position={[run.origin.x * M, settings.levels * 1.8 + 1.6, run.origin.z * M]}
+                center
+                style={{ pointerEvents: 'none' }}
+              >
+                <div className="whitespace-nowrap rounded-md bg-slate-800/90 px-2 py-1 text-xs font-semibold text-white shadow">
+                  全長 {runLength(run).toLocaleString()}mm ／ 枠幅 {run.width}
+                  {selection.bayIds.length > 0 && ` ／ ${selection.bayIds.length}スパン選択`}
+                </div>
+              </Html>
+            )}
+          </group>
+        );
+      })}
     </>
   );
 }
@@ -148,11 +170,16 @@ function Controls() {
 }
 
 export default function ScaffoldCanvas() {
-  // Esc / Enter で描画中の列を完成させる
+  // Esc / Enter: メニューを閉じる → 描画中の列を完成
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Enter') {
-        useScaffoldStore.getState().finishDraft();
+        const s = useScaffoldStore.getState();
+        if (s.contextMenu) {
+          s.closeContextMenu();
+          return;
+        }
+        s.finishDraft();
       }
     };
     window.addEventListener('keydown', onKey);

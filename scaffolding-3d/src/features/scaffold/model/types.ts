@@ -41,6 +41,14 @@ export interface Run {
   bays: Bay[];
 }
 
+/**
+ * 側面（長手方向の面）の構成。
+ *   braceAndRail: 外面に先行手摺（×型ブレス）＋内面に二段手摺（H450+H900）
+ *   bothRail:     両面とも二段手摺
+ *   bothBrace:    両面とも先行手摺（×型ブレス）
+ */
+export type SideMode = 'braceAndRail' | 'bothRail' | 'bothBrace';
+
 /** 壁つなぎの種別（サイズレンジ） */
 export type WallTieKind =
   | 'none'
@@ -61,6 +69,7 @@ export interface GlobalSettings {
   levels: number; // 段数
   topLevelIs900: boolean; // 最上段を900mmにする
   width: WidthMM; // 新しく描く列の枠幅
+  sideMode: SideMode; // 側面の構成（先行手摺/二段手摺）
   tsumaCount: 0 | 1 | 2; // 妻側（手すり・巾木）を付ける面数（列ごとの端部数）
 
   // --- 支柱・ジャッキ ---
@@ -112,6 +121,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   levels: 3,
   topLevelIs900: false,
   width: 914,
+  sideMode: 'braceAndRail',
   tsumaCount: 2,
 
   pillarOverride: null,
@@ -178,6 +188,29 @@ export function liftHeights(s: Pick<GlobalSettings, 'levels' | 'topLevelIs900'>)
 /** 足場の総高さ（mm） */
 export function totalHeightMm(s: Pick<GlobalSettings, 'levels' | 'topLevelIs900'>): number {
   return liftHeights(s).reduce((a, b) => a + b, 0);
+}
+
+/** 各段の下端高さ（mm・ベースからの累積）。cum[0]=0, cum[levels]=総高さ */
+export function cumulativeHeights(s: Pick<GlobalSettings, 'levels' | 'topLevelIs900'>): number[] {
+  const cum = [0];
+  let acc = 0;
+  for (const h of liftHeights(s)) {
+    acc += h;
+    cum.push(acc);
+  }
+  return cum;
+}
+
+/**
+ * ベースオフセット（地面から1段目下端までの高さ・mm）。
+ * ジャッキベース SB20=200 / SB40=400、根がらみ支柱があればさらに+225。
+ */
+export function baseOffsetMm(
+  s: Pick<GlobalSettings, 'jackBaseMode' | 'jackBaseOption' | 'negarami'>,
+): number {
+  if (s.jackBaseMode === 'none') return 0;
+  const jack = s.jackBaseOption === 'allSB40' ? 400 : 200;
+  return jack + (s.negarami ? 225 : 0);
 }
 
 /** "1,3,5" 形式の段指定をパースする */
