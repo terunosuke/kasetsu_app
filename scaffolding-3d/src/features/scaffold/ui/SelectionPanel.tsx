@@ -1,6 +1,6 @@
 'use client';
 
-import { SPANS, runLength, type SpanMM, type WidthMM, WIDTHS } from '../model/types';
+import { SPANS, openingGroups, runLength, type SpanMM, type WidthMM, WIDTHS } from '../model/types';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 
 const selectCls =
@@ -91,6 +91,49 @@ export function SelectionPanel() {
           <p className="-mt-1 text-[10px] leading-relaxed text-slate-400">
             階段は2スパン1セットで斜めに登ります（1スパン選択時は隣と自動ペア）
           </p>
+          {(() => {
+            const selBays = run.bays.filter((b) => selectedIds.includes(b.id));
+            const allOpening = selBays.length > 0 && selBays.every((b) => b.openingLevels);
+            // 選択ベイが属する開口グループ全体に高さ変更を適用する
+            const groupsForSel = openingGroups(run.bays).filter((g) =>
+              g.bayIndices.some((bi) => selectedIds.includes(run.bays[bi].id)),
+            );
+            const groupBayIds = groupsForSel.flatMap((g) => g.bayIndices.map((bi) => run.bays[bi].id));
+            return (
+              <>
+                <button
+                  className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                  onClick={() =>
+                    st().setOpeningForBays(run.id, allOpening ? groupBayIds : selectedIds, allOpening ? null : 2)
+                  }
+                >
+                  🚪 {allOpening ? '開口部を解除する' : '開口部にする（梁枠）'}
+                </button>
+                {allOpening && groupsForSel.length > 0 && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-slate-600">開口の高さ</span>
+                    <select
+                      className={selectCls}
+                      value={groupsForSel[0].levels}
+                      onChange={(e) =>
+                        st().setOpeningForBays(run.id, groupBayIds, Number(e.target.value))
+                      }
+                    >
+                      <option value={1}>1層（1800）</option>
+                      <option value={2}>2層（3600）</option>
+                      <option value={3}>3層（5400）</option>
+                    </select>
+                  </div>
+                )}
+                {allOpening && (
+                  <p className="-mt-1 text-[10px] leading-relaxed text-amber-600">
+                    梁枠は開口幅（1.5〜4スパン相当）で自動選定・両構面2枚。開口上部の積載は800kg以下、
+                    両端支柱付近に壁つなぎ、外方1スパンに布材・先行手すりを設けてください
+                  </p>
+                )}
+              </>
+            );
+          })()}
         </>
       )}
 
@@ -113,6 +156,7 @@ export function SelectionPanel() {
               <span className="text-xs text-slate-500">
                 #{i + 1}
                 {bay.isStair && <span title="階段"> 🪜</span>}
+                {bay.openingLevels && <span title={`開口部 ${bay.openingLevels}層`}> 🚪</span>}
               </span>
               <select
                 className={selectCls}

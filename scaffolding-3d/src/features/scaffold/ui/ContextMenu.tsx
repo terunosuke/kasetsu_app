@@ -80,6 +80,21 @@ export function ContextMenu() {
           🪜 {allStair ? '階段を解除する' : '階段に変更する'}
         </button>
 
+        <button
+          className="w-full rounded-md px-2 py-1.5 text-left font-semibold text-amber-700 hover:bg-amber-50"
+          onClick={() => {
+            const allOpening = run.bays
+              .filter((b) => targetIds.includes(b.id))
+              .every((b) => b.openingLevels);
+            st().setOpeningForBays(run.id, targetIds, allOpening ? null : 2);
+            st().closeContextMenu();
+          }}
+        >
+          🚪 {run.bays.filter((b) => targetIds.includes(b.id)).every((b) => b.openingLevels)
+            ? '開口部を解除する'
+            : '開口部にする（梁枠）'}
+        </button>
+
         <div className="my-1 border-t border-slate-100" />
 
         <button

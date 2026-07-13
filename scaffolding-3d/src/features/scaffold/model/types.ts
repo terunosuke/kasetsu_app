@@ -28,6 +28,8 @@ export interface Bay {
   span: SpanMM;
   dir: Vec2; // {x:±1,z:0} または {x:0,z:±1}
   isStair?: boolean; // 階段スパン（1スパン = 階段1セット）
+  /** 開口部（梁枠）の高さ（層数1〜3）。未設定 = 開口ではない */
+  openingLevels?: number;
 }
 
 /**
@@ -282,4 +284,42 @@ export function widenedBaySet(bays: Bay[]): Set<number> {
     for (let i = lo; i <= hi; i++) widened.add(i);
   }
   return widened;
+}
+
+/** 開口部（梁枠）のグループ。連続する開口スパンを1開口とする */
+export interface OpeningGroup {
+  bayIndices: number[];
+  levels: number; // 開口の高さ（層数）
+  lengthMm: number; // 開口幅の合計
+}
+
+/** 連続する開口スパンをグループ化する（高さはグループ先頭の値に統一して扱う） */
+export function openingGroups(bays: Bay[]): OpeningGroup[] {
+  const groups: OpeningGroup[] = [];
+  let current: number[] = [];
+  const flush = () => {
+    if (current.length > 0) {
+      groups.push({
+        bayIndices: current,
+        levels: bays[current[0]].openingLevels ?? 1,
+        lengthMm: current.reduce((sum, i) => sum + bays[i].span, 0),
+      });
+    }
+    current = [];
+  };
+  bays.forEach((bay, i) => {
+    if (bay.openingLevels && !bay.isStair) current.push(i);
+    else flush();
+  });
+  flush();
+  return groups;
+}
+
+/** 開口グループの内部節点（両端を除く、梁枠上に立つ支柱位置）の index 一覧 */
+export function openingInteriorNodes(group: OpeningGroup): number[] {
+  const first = group.bayIndices[0];
+  const last = group.bayIndices[group.bayIndices.length - 1];
+  const nodes: number[] = [];
+  for (let n = first + 1; n <= last; n++) nodes.push(n);
+  return nodes;
 }

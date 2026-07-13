@@ -18,11 +18,14 @@
  *   - 層間ネット: 段数 × ceil(全長/5.5m)、ブラケット: 段数 × 節点数
  *   - メッシュシート: スパンサイズごと × ceil(設置段/3)、妻側は枠幅ごと
  */
-import { DECK_LAYOUT, SPEC_MAP, WALL_TIE_NAME, WEIGHT_DICT } from '../catalog/albatross';
+import { DECK_LAYOUT, SPEC_MAP, WALL_TIE_NAME, WEIGHT_DICT, beamForOpening } from '../catalog/albatross';
 import { pillarComboFor } from '../model/fitting';
 import {
   SPANS,
   WIDTHS,
+  cumulativeHeights,
+  openingGroups,
+  openingInteriorNodes,
   resolveAntiLevels,
   resolveStairLevels,
   resolveToeboardLevels,
@@ -60,6 +63,7 @@ export interface Bom {
   totalHeightMm: number;
   bayCount: number;
   stairCount: number; // 階段セット数
+  openingCount: number; // 開口部（梁枠）の数
   nodeCount: number;
   pillarText: string;
   transportUnic: string;
@@ -90,6 +94,10 @@ function orderedKeys(): string[] {
     ...byWidth('短手布材'),
     ...antiKeys,
     '階段（セット）',
+    '梁枠（1.5スパン）',
+    '梁枠（2スパン）',
+    '梁枠（3スパン）',
+    '梁枠（4スパン）',
     ...bySpan('巾木'),
     ...byWidth('妻側手すり'),
     ...byWidth('妻側巾木'),
@@ -120,6 +128,10 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   const add = (key: string, n: number) => {
     if (n > 0) q.set(key, (q.get(key) ?? 0) + n);
   };
+  const sub = (key: string, n: number) => {
+    if (n <= 0) return;
+    q.set(key, Math.max(0, (q.get(key) ?? 0) - n));
+  };
   /** 差替（既存数量から減らして別部材へ付け替え） */
   const swap = (fromKey: string, toKey: string, n: number) => {
     if (n <= 0) return;
@@ -143,6 +155,9 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   let totalLengthMm = 0;
   let bayCount = 0;
   let stairSetCount = 0; // 階段セット数（1セット = 連続する最大2スパン）
+  let openingCount = 0; // 開口部（梁枠）の数
+  let interiorNodeCount = 0; // 開口内部の節点数（地上に建地が無い）
+  const cumsMm = cumulativeHeights(s);
   let nodeCount = 0;
 
   const activeRuns = runs.filter((r) => r.bays.length > 0);
@@ -194,10 +209,51 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       add('敷板（3m）', n3 * 2);
       add('敷板（2m）', n2 * 2);
     }
+
+    // --- 開口部（梁枠）: PDF「開口用梁」仕様に準拠 ---
+    //   ・梁枠は両構面に2枚／開口
+    //   ・開口内部の節点は梁枠上に支柱を挿す（地上〜梁枠間の支柱・ジャッキ・根がらみなし）
+    //   ・開口層の壁面部材（手すり/ブレス/アンチ/巾木/短手布材）を差し引く
+    for (const g of openingGroups(run.bays)) {
+      openingCount += 1;
+      const oLv = Math.min(g.levels, levels);
+      const interior = openingInteriorNodes(g);
+      interiorNodeCount += interior.length;
+
+      add(beamForOpening(g.lengthMm).name, 2);
+
+      // 支柱: 内部節点の全高分を引き、梁枠上（総高さ−開口高さ）分を積み直す
+      const shortHeightMm = heightMm - cumsMm[oLv];
+      for (const [len, count] of Object.entries(pillarCombo)) {
+        sub(`支柱（${len}）`, count * interior.length * 2);
+      }
+      if (shortHeightMm > 0) {
+        for (const [len, count] of Object.entries(pillarComboFor(shortHeightMm))) {
+          add(`支柱（${len}）`, count * interior.length * 2);
+        }
+      }
+      if (s.jackBaseMode !== 'none' && s.negarami) sub('根がらみ支柱', interior.length * 2);
+
+      sub(`短手布材（${run.width}）`, interior.length * oLv);
+
+      for (const bi of g.bayIndices) {
+        const bay = run.bays[bi];
+        sub(`長手手すり（${bay.span}）`, oLv * railsPerBayLevel);
+        sub(`ブレス（${bay.span}）`, oLv * bracesPerBayLevel);
+        const antiInOpening = antiLevels.filter((l) => l <= oLv).length;
+        for (const deckType of DECK_LAYOUT[run.width]) {
+          sub(`アンチ（${deckType}/${bay.span}）`, antiInOpening);
+        }
+        if (toeFaces > 0) {
+          const toeInOpening = toeLevels.filter((l) => l <= oLv).length;
+          sub(`巾木（${bay.span}）`, toeInOpening * toeFaces);
+        }
+      }
+    }
   }
 
   // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用） ---
-  const jackBaseNeeded = s.jackBaseMode !== 'none' ? nodeCount * 2 : 0;
+  const jackBaseNeeded = s.jackBaseMode !== 'none' ? (nodeCount - interiorNodeCount) * 2 : 0;
   const stairExtraNodes = s.stairWidening ? 2 * stairSetCount : 0; // 拡幅時の追加建地（外2列/セット）
   if (s.jackBaseMode !== 'none') {
     if (s.jackBaseOption === 'allSB20') add('ジャッキベース（20）', jackBaseNeeded + stairExtraNodes);
@@ -383,6 +439,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     totalHeightMm: heightMm,
     bayCount,
     stairCount: stairSetCount,
+    openingCount,
     nodeCount,
     pillarText: pillarComboText(pillarCombo),
     transportUnic,

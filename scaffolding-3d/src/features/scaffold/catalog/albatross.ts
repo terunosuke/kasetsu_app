@@ -60,6 +60,11 @@ export const WEIGHT_DICT: Record<string, number> = {
   '階段（セット）': 38.0,
   'タイコ（40）': 5.9,
   'タイコ（80）': 7.0,
+  // 開口用梁（梁枠）
+  '梁枠（1.5スパン）': 17.7,
+  '梁枠（2スパン）': 22.2,
+  '梁枠（3スパン）': 36.9,
+  '梁枠（4スパン）': 73.8,
   // 壁つなぎ系部材
   '壁つなぎ（160−200）': 0.75,
   '壁つなぎ（200−240）': 0.85,
@@ -141,6 +146,11 @@ export const SPEC_MAP: Record<string, string> = {
   '階段（セット）': 'SS17-S',
   'タイコ（40）': 'SBE40',
   'タイコ（80）': 'SBE80',
+  // 開口用梁（梁枠）
+  '梁枠（1.5スパン）': 'AHJ27',
+  '梁枠（2スパン）': 'AHJ36',
+  '梁枠（3スパン）': 'AHJ54',
+  '梁枠（4スパン）': 'AHJ72',
   // 壁つなぎ系部材
   '壁つなぎ（160−200）': 'KTS16',
   '壁つなぎ（200−240）': 'KTS20',
@@ -224,3 +234,26 @@ export const DECK_PLACEMENT: Record<WidthMM, DeckPlacement[]> = {
 
 /** 階段拡幅時の枠幅（アルバトロス仕様: 914 → 1219） */
 export const WIDENING_WIDTH_MM = 1219;
+
+/** 開口用梁（梁枠）の規格。開口幅の合計長に最も近いものを自動選定する */
+export interface BeamSpec {
+  name: string; // 部材名（WEIGHT_DICT のキー）
+  lengthMm: number; // 適用開口幅
+  heightMm: number; // 梁せい（3D描画用）
+}
+
+export const BEAM_SPECS: BeamSpec[] = [
+  { name: '梁枠（1.5スパン）', lengthMm: 2743, heightMm: 250 },
+  { name: '梁枠（2スパン）', lengthMm: 3658, heightMm: 250 },
+  { name: '梁枠（3スパン）', lengthMm: 5487, heightMm: 350 },
+  { name: '梁枠（4スパン）', lengthMm: 7316, heightMm: 450 },
+];
+
+/** 開口幅（mm）に最も近い梁枠を選ぶ */
+export function beamForOpening(lengthMm: number): BeamSpec {
+  let best = BEAM_SPECS[0];
+  for (const b of BEAM_SPECS) {
+    if (Math.abs(b.lengthMm - lengthMm) < Math.abs(best.lengthMm - lengthMm)) best = b;
+  }
+  return best;
+}
