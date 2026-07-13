@@ -68,6 +68,12 @@ export function BomPanel({ bom }: { bom: Bom }) {
                 <span className="text-right font-semibold">{bom.stairCount}セット</span>
               </>
             )}
+            {bom.openingCount > 0 && (
+              <>
+                <span>開口部（梁枠）</span>
+                <span className="text-right font-semibold">{bom.openingCount}ヶ所</span>
+              </>
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-slate-200">

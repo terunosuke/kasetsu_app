@@ -80,6 +80,8 @@ interface ScaffoldState {
   setSpanForBays(runId: string, bayIds: string[], span: SpanMM): void;
   toggleBayStair(runId: string, bayId: string): void;
   setStairForBays(runId: string, bayIds: string[], on: boolean): void;
+  /** 開口部（梁枠）の設定。levels=null で解除、数値(1〜3)で開口の高さ（層数） */
+  setOpeningForBays(runId: string, bayIds: string[], levels: number | null): void;
   setRunWidth(runId: string, width: WidthMM): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
@@ -241,10 +243,14 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
           // 設定: 階段は2スパン1セット（sub-alba 準拠）。
           // 隣のスパン（次を優先、なければ前）とペアで階段化する。
           bays[idx].isStair = true;
+          delete bays[idx].openingLevels; // 開口と階段は排他
           const next = idx + 1 < bays.length && !bays[idx + 1].isStair ? idx + 1 : null;
           const prev = idx - 1 >= 0 && !bays[idx - 1].isStair ? idx - 1 : null;
           const partner = next ?? prev;
-          if (partner !== null) bays[partner].isStair = true;
+          if (partner !== null) {
+            bays[partner].isStair = true;
+            delete bays[partner].openingLevels;
+          }
         }
         return { ...run, bays };
       }),
@@ -266,12 +272,37 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
         run.id === runId
           ? {
               ...run,
-              bays: run.bays.map((b) => (bayIds.includes(b.id) ? { ...b, isStair: on } : b)),
+              bays: run.bays.map((b) =>
+                bayIds.includes(b.id)
+                  ? { ...b, isStair: on, openingLevels: on ? undefined : b.openingLevels }
+                  : b,
+              ),
             }
           : run,
       ),
     }));
   },
+
+  setOpeningForBays: (runId, bayIds, levels) =>
+    set((s) => ({
+      history: pushHistory(s),
+      runs: s.runs.map((run) =>
+        run.id === runId
+          ? {
+              ...run,
+              bays: run.bays.map((b) =>
+                bayIds.includes(b.id)
+                  ? {
+                      ...b,
+                      openingLevels: levels === null ? undefined : Math.max(1, Math.min(3, levels)),
+                      isStair: levels === null ? b.isStair : false, // 開口と階段は排他
+                    }
+                  : b,
+              ),
+            }
+          : run,
+      ),
+    })),
 
   setRunWidth: (runId, width) =>
     set((s) => ({

@@ -16,13 +16,15 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
-import { DECK_PLACEMENT, WIDENING_WIDTH_MM } from '../catalog/albatross';
+import { DECK_PLACEMENT, WIDENING_WIDTH_MM, beamForOpening } from '../catalog/albatross';
 import { effectivePillarCombo } from '../logic/bom';
 import { pillarJointHeights } from '../model/fitting';
 import {
   baseOffsetMm,
   cumulativeHeights,
   nodePoints,
+  openingGroups,
+  openingInteriorNodes,
   resolveAntiLevels,
   resolveStairLevels,
   resolveToeboardLevels,
@@ -58,6 +60,7 @@ const C_DECK_NARROW = '#b4bcc4';
 const C_TOE = '#d9a62e';
 const C_TRANSOM = '#6b7b8c';
 const C_STAIR = '#808080';
+const C_BEAM = '#b45309'; // 開口用梁（梁枠）
 const C_JOINT = '#1a1a1a';
 const C_WALLTIE = '#e02020';
 const C_NET = '#00bfff';
@@ -263,6 +266,24 @@ export function RunParts({
     [settings, baseY],
   );
 
+  // ===== 開口部（梁枠） =====
+  const oGroups = useMemo(() => openingGroups(run.bays), [run.bays]);
+  const openingByBay = useMemo(() => {
+    const m = new Map<number, number>(); // bayIdx → 開口の高さ（層数）
+    for (const g of oGroups) {
+      for (const bi of g.bayIndices) m.set(bi, Math.min(g.levels, levels));
+    }
+    return m;
+  }, [oGroups, levels]);
+  const interiorNodeLv = useMemo(() => {
+    const m = new Map<number, number>(); // 開口内部の節点 → 開口の高さ（層数）
+    for (const g of oGroups) {
+      const oLv = Math.min(g.levels, levels);
+      for (const n of openingInteriorNodes(g)) m.set(n, oLv);
+    }
+    return m;
+  }, [oGroups, levels]);
+
   // ===== 階段セットと拡幅（sub-alba 準拠） =====
   const groups = useMemo(() => stairGroups(run.bays), [run.bays]);
   const widening = settings.stairWidening && run.width === 914;
@@ -358,10 +379,10 @@ export function RunParts({
     return { x: p.x + perp.x * off, z: p.z + perp.z * off };
   };
 
-  /** 建地1本（ジャッキベース＋根がらみ＋支柱＋ジョイント） */
-  const Leg = ({ at }: { at: P2 }) => (
+  /** 建地1本。fromY を指定すると梁枠上から立ち上がる（ジャッキ・根がらみなし） */
+  const Leg = ({ at, fromY = 0 }: { at: P2; fromY?: number }) => (
     <group>
-      {settings.jackBaseMode !== 'none' && (
+      {fromY <= 0 && settings.jackBaseMode !== 'none' && (
         <>
           <Box center={[at.x, 0.015, at.z]} size={[0.16, 0.03, 0.16]} color={C_JACK} paint={paint} />
           <Bar a={[at.x, 0.03, at.z]} b={[at.x, jackH, at.z]} r={0.017} color={C_JACK} paint={paint} />
@@ -370,13 +391,17 @@ export function RunParts({
           )}
         </>
       )}
-      <Bar a={[at.x, baseY, at.z]} b={[at.x, legTop, at.z]} r={LEG_R} color={C_LEG} paint={paint} />
+      {legTop - (fromY > 0 ? fromY : baseY) > 0.01 && (
+        <Bar a={[at.x, fromY > 0 ? fromY : baseY, at.z]} b={[at.x, legTop, at.z]} r={LEG_R} color={C_LEG} paint={paint} />
+      )}
       {/* 支柱ジョイント（黒い円盤） */}
-      {jointYs.map((jy, ji) => (
-        <mesh key={ji} geometry={unitCylinder} position={[at.x, jy, at.z]} scale={[0.11, 0.025, 0.11]}>
-          <meshStandardMaterial {...matProps(C_JOINT, paint)} />
-        </mesh>
-      ))}
+      {jointYs
+        .filter((jy) => jy > fromY + 0.01)
+        .map((jy, ji) => (
+          <mesh key={ji} geometry={unitCylinder} position={[at.x, jy, at.z]} scale={[0.11, 0.025, 0.11]}>
+            <meshStandardMaterial {...matProps(C_JOINT, paint)} />
+          </mesh>
+        ))}
     </group>
   );
 
@@ -405,6 +430,8 @@ export function RunParts({
         const nodeW = nodeWidthMm(i);
         const front = nodeAt(i, 0);
         const back = nodeAt(i, nodeW);
+        const oLvNode = interiorNodeLv.get(i) ?? 0; // 開口内部節点の開口層数
+        const legFromY = oLvNode > 0 ? baseY + cums[oLvNode] : 0;
         const isOuterWidened = widening && outerNodes.has(i) && widenedNodes.has(i);
         const mid914 = isOuterWidened ? nodeAt(i, 914) : null;
         const isTsumaEnd =
@@ -420,11 +447,12 @@ export function RunParts({
               : i < settings.wallTieSpanCount);
         return (
           <group key={i}>
-            <Leg at={front} />
-            <Leg at={back} />
+            <Leg at={front} fromY={legFromY} />
+            <Leg at={back} fromY={legFromY} />
             {mid914 && <Leg at={mid914} />}
-            {/* 短手布材（各段の下端）。拡幅の外列は 914 + 305 の2分割 */}
+            {/* 短手布材（各段の下端）。拡幅の外列は 914 + 305 の2分割。開口内部は開口層なし */}
             {Array.from({ length: levels }, (_, li) => {
+              if (li + 1 <= oLvNode) return null;
               const y = deckY(li + 1);
               return (
                 <group key={li}>
@@ -457,7 +485,7 @@ export function RunParts({
               )}
             {/* 壁つなぎ（内面＝建物側、段の中間高さに赤球） */}
             {tieHere &&
-              tieLevels.map((li) => (
+              tieLevels.filter((li) => li >= oLvNode).map((li) => (
                 <mesh
                   key={`tie-${li}`}
                   position={[front.x, baseY + (cums[li] + cums[li + 1]) / 2, front.z]}
@@ -479,6 +507,7 @@ export function RunParts({
         const perp = { x: -bay.dir.z, z: bay.dir.x };
         const isSelected = selectedBayIds?.has(bay.id) ?? false;
         const bayPaint: Paint = isSelected && paint.opacity === undefined ? { tint: HIGHLIGHT } : paint;
+        const bayOLv = openingByBay.get(bi) ?? 0; // 開口部（梁枠）の高さ（層数）
         const effW = bayWidthMm(bi);
         const placements = DECK_PLACEMENT[effW];
         const backOffMm = effW;
@@ -528,6 +557,7 @@ export function RunParts({
               const hasDeck = antiSet.has(level);
               const hasToe = toeSet.has(level);
               const opening = hasDeck && hasOpening(level, bi);
+              if (level <= bayOLv) return null; // 開口部: この層は部材なし（梁枠のみ）
               return (
                 <group key={li}>
                   {/* アンチ（段の下端に敷設。開口時はブレス側500を抜く） */}
@@ -604,8 +634,9 @@ export function RunParts({
             {/* 外周メッシュシート（外面・5400mm単位で積む） */}
             {Array.from({ length: sheetUnits }, (_, si) => {
               const unitH = 5.4;
-              const bottom = baseY + si * unitH;
-              const top = Math.min(bottom + unitH, legTop);
+              const sheetBase = bayOLv > 0 ? baseY + cums[bayOLv] : baseY; // 開口ベイは梁枠上から
+              const bottom = Math.max(baseY + si * unitH, sheetBase);
+              const top = Math.min(baseY + si * unitH + unitH, legTop);
               if (top - bottom <= 0.01) return null;
               const line = lineAt(backOffMm + 40);
               const cx = (line.a.x + line.b.x) / 2;
@@ -668,6 +699,78 @@ export function RunParts({
               );
             });
           })}
+
+      {/* ===== 開口部（梁枠）: 開口上端に両構面トラス梁 ===== */}
+      {oGroups.map((g, gi) => {
+        const oLv = Math.min(g.levels, levels);
+        const beam = beamForOpening(g.lengthMm);
+        const topY = baseY + cums[oLv];
+        const botY = topY - beam.heightMm * M;
+        const startN = g.bayIndices[0];
+        const endN = g.bayIndices[g.bayIndices.length - 1] + 1;
+        const firstBay = run.bays[g.bayIndices[0]];
+        const faces = [0, run.width]; // 両構面
+        const groundMid = (() => {
+          const pa = pts[startN];
+          const pb = pts[endN];
+          return { x: (pa.x + pb.x) / 2, z: (pa.z + pb.z) / 2 };
+        })();
+        return (
+          <group
+            key={`beam-${gi}`}
+            onClick={
+              onPickBay
+                ? (e: ThreeEvent<MouseEvent>) => {
+                    e.stopPropagation();
+                    onPickBay(firstBay.id, {
+                      shift: e.nativeEvent.shiftKey,
+                      ctrl: e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+                    });
+                  }
+                : undefined
+            }
+          >
+            {faces.map((dMm, fi) => {
+              const pA = (() => { const p = pts[startN]; const perp = perpAt(startN === run.bays.length ? startN - 1 : startN); const off = frontOff + dMm * M; return { x: p.x + perp.x * off, z: p.z + perp.z * off }; })();
+              const pB = (() => { const p = pts[endN]; const perp = perpAt(endN > 0 ? endN - 1 : 0); const off = frontOff + dMm * M; return { x: p.x + perp.x * off, z: p.z + perp.z * off }; })();
+              const segs = Math.max(3, Math.round(g.lengthMm / 900));
+              const at = (t: number) => ({ x: pA.x + (pB.x - pA.x) * t, z: pA.z + (pB.z - pA.z) * t });
+              const items = [];
+              // 上弦・下弦
+              items.push(<Bar key="tc" a={[pA.x, topY, pA.z]} b={[pB.x, topY, pB.z]} r={0.022} color={C_BEAM} paint={paint} />);
+              items.push(<Bar key="bc" a={[pA.x, botY, pA.z]} b={[pB.x, botY, pB.z]} r={0.022} color={C_BEAM} paint={paint} />);
+              // 縦材＋斜材（ラチス）
+              for (let k = 0; k <= segs; k++) {
+                const p = at(k / segs);
+                items.push(<Bar key={`v${k}`} a={[p.x, botY, p.z]} b={[p.x, topY, p.z]} r={0.012} color={C_BEAM} paint={paint} />);
+                if (k < segs) {
+                  const pn = at((k + 1) / segs);
+                  const up = k % 2 === 0;
+                  items.push(
+                    <Bar
+                      key={`d${k}`}
+                      a={[p.x, up ? botY : topY, p.z]}
+                      b={[pn.x, up ? topY : botY, pn.z]}
+                      r={0.01}
+                      color={C_BEAM}
+                      paint={paint}
+                    />,
+                  );
+                }
+              }
+              return <group key={fi}>{items}</group>;
+            })}
+            {/* 開口寸法ラベル */}
+            {showDims && (
+              <DimLabel
+                position={[groundMid.x, 0.25, groundMid.z]}
+                text={`開口${g.lengthMm.toLocaleString()}（${beam.name.replace('梁枠（', '').replace('）', '')}）`}
+                color="#b45309"
+              />
+            )}
+          </group>
+        );
+      })}
 
       {/* ===== 階段（セットごと: 2スパン=斜め型 / 1スパン=垂直型） ===== */}
       {groups.map((g, gi) => {
