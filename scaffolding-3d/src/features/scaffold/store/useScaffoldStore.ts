@@ -71,6 +71,8 @@ interface ScaffoldState {
   cancelDraft(): void;
 
   selectBay(runId: string, bayId: string, mods?: SelectModifiers): void;
+  /** 複数ベイをまとめて選択（開口部クリックなどで使用） */
+  selectBays(runId: string, bayIds: string[]): void;
   selectRun(runId: string): void;
   clearSelection(): void;
   openContextMenu(menu: ContextMenu): void;
@@ -203,6 +205,8 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
 
       return { selection: { runId, bayIds: [bayId] }, contextMenu: null };
     }),
+
+  selectBays: (runId, bayIds) => set({ selection: { runId, bayIds: [...bayIds] }, contextMenu: null }),
 
   selectRun: (runId) => set({ selection: { runId, bayIds: [] }, contextMenu: null }),
 

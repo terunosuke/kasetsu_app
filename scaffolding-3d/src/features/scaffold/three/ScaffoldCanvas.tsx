@@ -110,6 +110,11 @@ function PlacedRuns() {
                   ? (bayId, mods) => useScaffoldStore.getState().selectBay(run.id, bayId, mods)
                   : undefined
               }
+              onPickBays={
+                mode === 'select'
+                  ? (bayIds) => useScaffoldStore.getState().selectBays(run.id, bayIds)
+                  : undefined
+              }
               onPickRun={
                 mode === 'select' ? () => useScaffoldStore.getState().selectRun(run.id) : undefined
               }
