@@ -30,6 +30,12 @@ export interface Bay {
   isStair?: boolean; // 階段スパン（1スパン = 階段1セット）
   /** 開口部（梁枠）の高さ（層数1〜3）。未設定 = 開口ではない */
   openingLevels?: number;
+  /**
+   * このベイの直前で列が直角に曲がる場合のコーナーの勝ち負け。
+   * 'prev' = 手前（先に描いた）軸が勝ち（デフォルト）／ 'next' = このベイの軸が勝ち。
+   * 勝ち軸のアンチをコーナー端まで通し、負け軸は勝ち軸の面まで寄せる。
+   */
+  cornerWin?: 'prev' | 'next';
 }
 
 /**
@@ -326,4 +332,105 @@ export function openingInteriorNodes(group: OpeningGroup): number[] {
   const nodes: number[] = [];
   for (let n = first + 1; n <= last; n++) nodes.push(n);
   return nodes;
+}
+
+// ============ コーナー（L字直角）処理 ============
+//
+// 列の途中で向きが変わる位置をコーナーとし、直線区間（セグメント）に分割する。
+// 直角コーナーでは勝ち軸（cornerWin、デフォルト=手前の軸）を決め、
+//   ・負け軸の区間を勝ち軸の面まで W/2 シフト（重なり解消）
+//   ・勝ち軸のアンチをコーナー端（負け軸の外面）まで延長
+//   ・勝ち軸の最端部（延長部の外縁）に端部手すり
+// を適用する。アルバはさらに負け軸コーナー節点の支柱を勝ち軸と兼用（建地省略）。
+
+/** 直角コーナーの情報 */
+export interface CornerInfo {
+  /** 向きが変わった直後のベイ index（cornerWin を保持するベイ） */
+  bayIndex: number;
+  winner: 'prev' | 'next';
+  dirPrev: Vec2;
+  dirNext: Vec2;
+  /** 勝ち軸のコーナー側端点（シフト適用後、mm） */
+  base: Vec2;
+  /** アンチ延長の方向（勝ち軸端点から外向き） */
+  extendDir: Vec2;
+  /** 直交コーナーか（折返し等 false のときは位置調整なし） */
+  perpendicular: boolean;
+}
+
+/** 直線区間。origin はコーナーシフト適用後の始点（mm） */
+export interface RunSegment {
+  origin: Vec2;
+  bays: Bay[];
+  startBayIndex: number;
+  cornerAtStart: CornerInfo | null;
+  cornerAtEnd: CornerInfo | null;
+}
+
+/** 列を直線区間に分割し、コーナーの勝ち負けに応じたシフトを適用する */
+export function runSegments(run: Pick<Run, 'origin' | 'bays' | 'width'>): {
+  segments: RunSegment[];
+  corners: CornerInfo[];
+} {
+  const { bays } = run;
+  const segments: RunSegment[] = [];
+  const corners: CornerInfo[] = [];
+  if (bays.length === 0) return { segments, corners };
+
+  const halfW = run.width / 2;
+  const raw = nodePoints(run);
+
+  // 区間境界（向きが変わるベイ index）
+  const bounds = [0];
+  for (let i = 1; i < bays.length; i++) {
+    if (bays[i].dir.x !== bays[i - 1].dir.x || bays[i].dir.z !== bays[i - 1].dir.z) bounds.push(i);
+  }
+  bounds.push(bays.length);
+
+  const offset: Vec2 = { x: 0, z: 0 };
+  for (let s = 0; s < bounds.length - 1; s++) {
+    const from = bounds[s];
+    let cornerAtStart: CornerInfo | null = null;
+
+    if (from > 0) {
+      const dirPrev = bays[from - 1].dir;
+      const dirNext = bays[from].dir;
+      const perpendicular =
+        Math.abs(dirPrev.x * dirNext.x + dirPrev.z * dirNext.z) < 0.5;
+      const winner = bays[from].cornerWin ?? 'prev';
+      let base: Vec2;
+      let extendDir: Vec2;
+      if (winner === 'prev') {
+        // 手前の軸が勝ち: 勝ち軸端点は前区間の終端。負け軸（後区間）を前方に W/2 シフト
+        base = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
+        extendDir = dirPrev;
+        if (perpendicular) {
+          offset.x += dirNext.x * halfW;
+          offset.z += dirNext.z * halfW;
+        }
+      } else {
+        // 後の軸が勝ち: 後区間（勝ち）を負け軸の外面まで W/2 スライドし、始端から手前に延長
+        if (perpendicular) {
+          offset.x += dirPrev.x * halfW;
+          offset.z += dirPrev.z * halfW;
+        }
+        base = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
+        extendDir = { x: -dirNext.x, z: -dirNext.z };
+      }
+      cornerAtStart = { bayIndex: from, winner, dirPrev, dirNext, base, extendDir, perpendicular };
+      corners.push(cornerAtStart);
+    }
+
+    segments.push({
+      origin: { x: raw[from].x + offset.x, z: raw[from].z + offset.z },
+      bays: bays.slice(from, bounds[s + 1]),
+      startBayIndex: from,
+      cornerAtStart,
+      cornerAtEnd: null,
+    });
+  }
+  for (let s = 0; s < segments.length - 1; s++) {
+    segments[s].cornerAtEnd = segments[s + 1].cornerAtStart;
+  }
+  return { segments, corners };
 }

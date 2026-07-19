@@ -29,9 +29,11 @@ import {
   resolveStairLevels,
   resolveToeboardLevels,
   runLength,
+  runSegments,
   stairGroups,
   totalHeightMm,
   widenedBaySet,
+  type CornerInfo,
   type GlobalSettings,
   type Run,
   type WidthMM,
@@ -218,16 +220,7 @@ function resolveLevelIndices(
   return Array.from({ length: Math.min(count, levels) }, (_, i) => i);
 }
 
-export function RunParts({
-  run,
-  settings,
-  paint = {},
-  selectedBayIds,
-  onPickBay,
-  onPickBays,
-  onPickRun,
-  onContextMenu,
-}: {
+export interface RunPartsProps {
   run: Pick<Run, 'origin' | 'bays' | 'width'>;
   settings: GlobalSettings;
   paint?: Paint;
@@ -239,7 +232,34 @@ export function RunParts({
   onPickRun?: () => void;
   /** 右クリック（画面座標つき） */
   onContextMenu?: (x: number, y: number, bayId: string | null) => void;
-}) {
+  /** 始端/終端に妻側部材（手すり・巾木・シート）を出すか（コーナー接続端は false） */
+  tsumaAtStart?: boolean;
+  tsumaAtEnd?: boolean;
+  /** コーナーの負け軸側端: 建地・ジャッキ・根がらみを省略（勝ち軸の支柱と兼用） */
+  skipLegsAtStart?: boolean;
+  skipLegsAtEnd?: boolean;
+  /** 枠幅・全長ラベルを出すか（複数区間では先頭区間のみ） */
+  showRunLabel?: boolean;
+  /** 全長ラベルの値（区間分割時に列全体の値を渡す） */
+  fullLengthMm?: number;
+}
+
+export function RunParts({
+  run,
+  settings,
+  paint = {},
+  selectedBayIds,
+  onPickBay,
+  onPickBays,
+  onPickRun,
+  onContextMenu,
+  tsumaAtStart = true,
+  tsumaAtEnd = true,
+  skipLegsAtStart = false,
+  skipLegsAtEnd = false,
+  showRunLabel = true,
+  fullLengthMm,
+}: RunPartsProps) {
   const { levels } = settings;
   const w = run.width * M;
   const frontOff = -w / 2; // 中心線から見た内面（建物側・250アンチ側）建地ラインのオフセット
@@ -438,8 +458,11 @@ export function RunParts({
         const isOuterWidened = widening && outerNodes.has(i) && widenedNodes.has(i);
         const mid914 = isOuterWidened ? nodeAt(i, 914) : null;
         const isTsumaEnd =
-          (settings.tsumaCount >= 1 && i === 0) ||
-          (settings.tsumaCount >= 2 && i === pts.length - 1);
+          (tsumaAtStart && settings.tsumaCount >= 1 && i === 0) ||
+          (tsumaAtEnd && settings.tsumaCount >= 2 && i === pts.length - 1);
+        // コーナー負け軸側の節点: 支柱は勝ち軸と兼用（建地・ジャッキ・根がらみを描かない）
+        const hideLegs =
+          (skipLegsAtStart && i === 0) || (skipLegsAtEnd && i === pts.length - 1);
         // 壁つなぎ: 設置スパン（節点）判定
         const tieHere =
           settings.wallTieMode !== 'none' &&
@@ -450,9 +473,13 @@ export function RunParts({
               : i < settings.wallTieSpanCount);
         return (
           <group key={i}>
-            <Leg at={front} fromY={legFromY} />
-            <Leg at={back} fromY={legFromY} />
-            {mid914 && <Leg at={mid914} />}
+            {!hideLegs && (
+              <>
+                <Leg at={front} fromY={legFromY} />
+                <Leg at={back} fromY={legFromY} />
+                {mid914 && <Leg at={mid914} />}
+              </>
+            )}
             {/* 短手布材（各段の下端）。拡幅の外列は 914 + 305 の2分割。開口内部は開口層なし */}
             {Array.from({ length: levels }, (_, li) => {
               if (li + 1 <= oLvNode) return null;
@@ -675,7 +702,11 @@ export function RunParts({
       {settings.sheet &&
         settings.tsumaSheetCount > 0 &&
         [0, pts.length - 1]
-          .filter((_, k) => (k === 0 ? settings.tsumaSheetCount >= 1 : settings.tsumaSheetCount >= 2))
+          .filter((_, k) =>
+            k === 0
+              ? tsumaAtStart && settings.tsumaSheetCount >= 1
+              : tsumaAtEnd && settings.tsumaSheetCount >= 2,
+          )
           .map((ni) => {
             const nodeW = nodeWidthMm(ni);
             const front = nodeAt(ni, -40);
@@ -899,6 +930,7 @@ export function RunParts({
 
       {/* ===== 枠幅・拡幅の寸法表示（列の始端の手前） ===== */}
       {showDims &&
+        showRunLabel &&
         (() => {
           const p0 = pts[0];
           const d0 = run.bays[0].dir;
@@ -915,12 +947,118 @@ export function RunParts({
               )}
               <DimLabel
                 position={[p0.x - d0.x * 0.9, 0.45, p0.z - d0.z * 0.9]}
-                text={`全長${runLength(run).toLocaleString()}`}
+                text={`全長${(fullLengthMm ?? runLength(run)).toLocaleString()}`}
                 color="#d02020"
               />
             </group>
           );
         })()}
+    </group>
+  );
+}
+
+/**
+ * コーナー（直角）の勝ち軸側に描く追加部材:
+ *   ・アンチ延長（コーナー端＝負け軸の外面まで W/2 伸ばす）
+ *   ・端部手すり（延長部の外縁・二段 H450+H900、アンチ設置段ごと）
+ */
+export function CornerParts({
+  corner,
+  width,
+  settings,
+  paint = {},
+}: {
+  corner: CornerInfo;
+  width: WidthMM;
+  settings: GlobalSettings;
+  paint?: Paint;
+}) {
+  const baseY = baseOffsetMm(settings) * M;
+  const cums = cumulativeHeights(settings).map((v) => v * M);
+  const antiLevels = resolveAntiLevels(settings);
+  const w = width * M;
+  const frontOff = -w / 2;
+  const halfW = w / 2;
+
+  const winDir = corner.winner === 'prev' ? corner.dirPrev : corner.dirNext;
+  const perp = { x: -winDir.z, z: winDir.x };
+  const base = { x: corner.base.x * M, z: corner.base.z * M };
+  const ext = corner.extendDir;
+  const alongX = Math.abs(winDir.x) > 0;
+
+  const at = (dMm: number, extM: number): P2 => ({
+    x: base.x + perp.x * (frontOff + dMm * M) + ext.x * extM,
+    z: base.z + perp.z * (frontOff + dMm * M) + ext.z * extM,
+  });
+
+  return (
+    <group>
+      {antiLevels.map((level) => {
+        const y0 = baseY + cums[level - 1];
+        const railA = at(0, halfW);
+        const railB = at(width, halfW);
+        return (
+          <group key={level}>
+            {/* アンチ延長（勝ち軸の敷き並べを負け軸の外面まで） */}
+            {DECK_PLACEMENT[width].map((pl, pi) => {
+              const c = at(pl.centerMm, halfW / 2);
+              const dw = pl.widthMm * M;
+              const dl = halfW * 0.97;
+              return (
+                <Box
+                  key={pi}
+                  center={[c.x, y0 + DECK_LIFT + DECK_T / 2, c.z]}
+                  size={alongX ? [dl, DECK_T, dw] : [dw, DECK_T, dl]}
+                  color={pl.widthMm <= 250 ? C_DECK_NARROW : C_DECK}
+                  paint={paint}
+                />
+              );
+            })}
+            {/* 端部手すり（勝ち軸の最端部・二段） */}
+            <Bar a={[railA.x, y0 + 0.45, railA.z]} b={[railB.x, y0 + 0.45, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+            <Bar a={[railA.x, y0 + 0.9, railA.z]} b={[railB.x, y0 + 0.9, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+/**
+ * コーナー（直角）を考慮して列を描画する入口。
+ * 向きが変わる列は直線区間に分割し、負け軸を勝ち軸の面までシフトして描く。
+ */
+export function RunAssembly(props: RunPartsProps) {
+  const { run, settings } = props;
+  const { segments, corners } = useMemo(() => runSegments(run), [run]);
+  if (segments.length <= 1) return <RunParts {...props} />;
+  const fullLen = runLength(run);
+  return (
+    <group>
+      {segments.map((seg, si) => (
+        <RunParts
+          key={si}
+          {...props}
+          run={{ origin: seg.origin, width: run.width, bays: seg.bays }}
+          tsumaAtStart={si === 0}
+          tsumaAtEnd={si === segments.length - 1}
+          skipLegsAtStart={!!(seg.cornerAtStart?.perpendicular && seg.cornerAtStart.winner === 'prev')}
+          skipLegsAtEnd={!!(seg.cornerAtEnd?.perpendicular && seg.cornerAtEnd.winner === 'next')}
+          showRunLabel={si === 0}
+          fullLengthMm={fullLen}
+        />
+      ))}
+      {corners
+        .filter((c) => c.perpendicular)
+        .map((c, ci) => (
+          <CornerParts
+            key={`corner-${ci}`}
+            corner={c}
+            width={run.width}
+            settings={settings}
+            paint={props.paint}
+          />
+        ))}
     </group>
   );
 }

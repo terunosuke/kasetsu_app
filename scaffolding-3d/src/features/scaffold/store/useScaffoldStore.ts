@@ -84,6 +84,8 @@ interface ScaffoldState {
   setStairForBays(runId: string, bayIds: string[], on: boolean): void;
   /** 開口部（梁枠）の設定。levels=null で解除、数値(1〜3)で開口の高さ（層数） */
   setOpeningForBays(runId: string, bayIds: string[], levels: number | null): void;
+  /** コーナー（直角）の勝ち軸を設定。bayId = 向きが変わった直後のベイ */
+  setCornerWin(runId: string, bayId: string, win: 'prev' | 'next'): void;
   setRunWidth(runId: string, width: WidthMM): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
@@ -304,6 +306,16 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
                   : b,
               ),
             }
+          : run,
+      ),
+    })),
+
+  setCornerWin: (runId, bayId, win) =>
+    set((s) => ({
+      history: pushHistory(s),
+      runs: s.runs.map((run) =>
+        run.id === runId
+          ? { ...run, bays: run.bays.map((b) => (b.id === bayId ? { ...b, cornerWin: win } : b)) }
           : run,
       ),
     })),

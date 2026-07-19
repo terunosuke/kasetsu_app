@@ -13,7 +13,7 @@ import { Grid, Html, OrbitControls } from '@react-three/drei';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 import { spanBreakdownText } from '../model/fitting';
 import { runLength } from '../model/types';
-import { RunParts } from './RunParts';
+import { RunAssembly } from './RunParts';
 
 const M = 1 / 1000;
 
@@ -66,7 +66,7 @@ function GhostRun() {
         <meshStandardMaterial color="#2563eb" />
       </mesh>
       {allBays.length > 0 && (
-        <RunParts
+        <RunAssembly
           run={{ origin: draft.origin, bays: allBays, width: settings.width }}
           settings={settings}
           paint={{ opacity: 0.4, tint: '#3b82f6' }}
@@ -101,7 +101,7 @@ function PlacedRuns() {
         const selectedBayIds = isSelected ? new Set(selection.bayIds) : null;
         return (
           <group key={run.id}>
-            <RunParts
+            <RunAssembly
               run={run}
               settings={settings}
               selectedBayIds={selectedBayIds}
