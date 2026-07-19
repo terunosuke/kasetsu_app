@@ -97,6 +97,9 @@ export interface GlobalSettings {
   stairLevels: string;
   stairWidening: boolean; // 拡幅（枠幅914 → 1219差替＋短手布材305等）
 
+  /** 開口部（梁わく）の方杖サイズ。SPL54・72 使用時に 4本/開口を計上 */
+  spsSize: 18 | 15 | 12 | 9;
+
   // --- 壁つなぎ ---
   wallTieMode: WallTieKind;
   wallTieLevelMode: 'all' | 'alternate' | 'custom';
@@ -145,6 +148,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   stairMode: 'notTop',
   stairLevels: '',
   stairWidening: false,
+  spsSize: 18,
 
   wallTieMode: 'none',
   wallTieLevelMode: 'all',

@@ -706,9 +706,10 @@ export function RunParts({
       {/* ===== 開口部（梁枠）: 開口上端に両構面トラス梁 ===== */}
       {oGroups.map((g, gi) => {
         const oLv = Math.min(g.levels, levels);
-        const beam = beamForOpening(g.lengthMm);
+        const beam = beamForOpening(g.lengthMm); // null = 7200超（梁わく適用外）
+        const beamCol = beam ? C_BEAM : '#dc2626';
         const topY = baseY + cums[oLv];
-        const botY = topY - beam.heightMm * M;
+        const botY = topY - (beam?.heightMm ?? 400) * M;
         const startN = g.bayIndices[0];
         const endN = g.bayIndices[g.bayIndices.length - 1] + 1;
         const firstBay = run.bays[g.bayIndices[0]];
@@ -766,12 +767,12 @@ export function RunParts({
               const at = (t: number) => ({ x: pA.x + (pB.x - pA.x) * t, z: pA.z + (pB.z - pA.z) * t });
               const items = [];
               // 上弦・下弦
-              items.push(<Bar key="tc" a={[pA.x, topY, pA.z]} b={[pB.x, topY, pB.z]} r={0.022} color={C_BEAM} paint={paint} />);
-              items.push(<Bar key="bc" a={[pA.x, botY, pA.z]} b={[pB.x, botY, pB.z]} r={0.022} color={C_BEAM} paint={paint} />);
+              items.push(<Bar key="tc" a={[pA.x, topY, pA.z]} b={[pB.x, topY, pB.z]} r={0.022} color={beamCol} paint={paint} />);
+              items.push(<Bar key="bc" a={[pA.x, botY, pA.z]} b={[pB.x, botY, pB.z]} r={0.022} color={beamCol} paint={paint} />);
               // 縦材＋斜材（ラチス）
               for (let k = 0; k <= segs; k++) {
                 const p = at(k / segs);
-                items.push(<Bar key={`v${k}`} a={[p.x, botY, p.z]} b={[p.x, topY, p.z]} r={0.012} color={C_BEAM} paint={paint} />);
+                items.push(<Bar key={`v${k}`} a={[p.x, botY, p.z]} b={[p.x, topY, p.z]} r={0.012} color={beamCol} paint={paint} />);
                 if (k < segs) {
                   const pn = at((k + 1) / segs);
                   const up = k % 2 === 0;
@@ -781,11 +782,20 @@ export function RunParts({
                       a={[p.x, up ? botY : topY, p.z]}
                       b={[pn.x, up ? topY : botY, pn.z]}
                       r={0.01}
-                      color={C_BEAM}
+                      color={beamCol}
                       paint={paint}
                     />,
                   );
                 }
+              }
+              // 方杖（SPL54・72: 梁わく両端の下から斜めに支える。2本/構面 × 両構面 = 4本/開口）
+              if (beam?.needsBrace) {
+                const d = (settings.spsSize * 100 * M) / Math.SQRT2; // SPS呼び×100mm を45°掛け
+                const dir = { x: (pB.x - pA.x) / openLen, z: (pB.z - pA.z) / openLen };
+                items.push(
+                  <Bar key="spsA" a={[pA.x, botY - d, pA.z]} b={[pA.x + dir.x * d, botY, pA.z + dir.z * d]} r={0.014} color={beamCol} paint={paint} />,
+                  <Bar key="spsB" a={[pB.x, botY - d, pB.z]} b={[pB.x - dir.x * d, botY, pB.z - dir.z * d]} r={0.014} color={beamCol} paint={paint} />,
+                );
               }
               return <group key={fi}>{items}</group>;
             })}
@@ -793,8 +803,12 @@ export function RunParts({
             {showDims && (
               <DimLabel
                 position={[groundMid.x, 0.25, groundMid.z]}
-                text={`開口${g.lengthMm.toLocaleString()}（${beam.name.replace('梁枠（', '').replace('）', '')}）`}
-                color="#b45309"
+                text={
+                  beam
+                    ? `開口${g.lengthMm.toLocaleString()}（${beam.code}×2）`
+                    : `開口${g.lengthMm.toLocaleString()}（⚠7,200超・マルチトラス材別途）`
+                }
+                color={beam ? '#b45309' : '#dc2626'}
               />
             )}
           </group>

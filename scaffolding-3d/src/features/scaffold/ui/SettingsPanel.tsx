@@ -382,6 +382,34 @@ export function SettingsPanel({ bom }: { bom: Bom }) {
         />
       </Section>
 
+      {/* ============ 開口部（梁わく） ============ */}
+      <Section
+        title="開口部（梁わく）"
+        badge={bom.openingCount > 0 ? `${bom.openingCount}ヶ所` : undefined}
+      >
+        <p className="rounded-md bg-blue-50 px-2 py-1.5 text-[11px] leading-relaxed text-blue-700">
+          「選択・編集」モードでスパンをクリック →「開口部にする」で配置します。
+          梁わくは開口幅からSPL36／SPL54／SPL72を自動選定（上限7,200mm）
+        </p>
+        <div className={rowCls}>
+          <span className={labelCls}>方杖サイズ（SPL54・72時）</span>
+          <select
+            className={selectCls}
+            value={s.spsSize}
+            onChange={(e) => update({ spsSize: Number(e.target.value) as GlobalSettings['spsSize'] })}
+          >
+            <option value={18}>SPS18（1,800）標準</option>
+            <option value={15}>SPS15（1,500）</option>
+            <option value={12}>SPS12（1,200）</option>
+            <option value={9}>SPS9（900）</option>
+          </select>
+        </div>
+        <p className="text-[10px] leading-relaxed text-slate-500">
+          自動計上: 梁わく2本・受け金具SPLT4個・床付き布わく受けパイプSPLE（スパン数−1）・
+          方杖4本（SPL54・72のみ）／開口1ヶ所あたり
+        </p>
+      </Section>
+
       {/* ============ 壁つなぎ ============ */}
       <Section title="壁つなぎ" badge={s.wallTieMode !== 'none' ? 'あり' : undefined}>
         <div className={rowCls}>
