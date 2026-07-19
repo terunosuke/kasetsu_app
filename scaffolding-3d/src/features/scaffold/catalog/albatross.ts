@@ -60,11 +60,19 @@ export const WEIGHT_DICT: Record<string, number> = {
   '階段（セット）': 38.0,
   'タイコ（40）': 5.9,
   'タイコ（80）': 7.0,
-  // 開口用梁（梁枠）
-  '梁枠（1.5スパン）': 17.7,
-  '梁枠（2スパン）': 22.2,
-  '梁枠（3スパン）': 36.9,
-  '梁枠（4スパン）': 73.8,
+  // 開口用梁（梁わく SPLシリーズ）と付属部材（開口用梁カタログ準拠）
+  '梁わく（SPL36）': 21.2,
+  '梁わく（SPL54）': 35.8,
+  '梁わく（SPL72）': 51.4,
+  '梁わく受け金具（SPLT）': 2.8,
+  '床付き布わく受けパイプ（SPLE4）': 4.8,
+  '床付き布わく受けパイプ（SPLE6）': 5.8,
+  '床付き布わく受けパイプ（SPLE9）': 6.6,
+  '床付き布わく受けパイプ（SPLE12）': 7.0,
+  '方杖（SPS9）': 3.0,
+  '方杖（SPS12）': 3.75,
+  '方杖（SPS15）': 4.36,
+  '方杖（SPS18）': 5.26,
   // 壁つなぎ系部材
   '壁つなぎ（160−200）': 0.75,
   '壁つなぎ（200−240）': 0.85,
@@ -146,11 +154,19 @@ export const SPEC_MAP: Record<string, string> = {
   '階段（セット）': 'SS17-S',
   'タイコ（40）': 'SBE40',
   'タイコ（80）': 'SBE80',
-  // 開口用梁（梁枠）
-  '梁枠（1.5スパン）': 'AHJ27',
-  '梁枠（2スパン）': 'AHJ36',
-  '梁枠（3スパン）': 'AHJ54',
-  '梁枠（4スパン）': 'AHJ72',
+  // 開口用梁（梁わく SPLシリーズ）と付属部材
+  '梁わく（SPL36）': 'SPL36',
+  '梁わく（SPL54）': 'SPL54',
+  '梁わく（SPL72）': 'SPL72',
+  '梁わく受け金具（SPLT）': 'SPLT',
+  '床付き布わく受けパイプ（SPLE4）': 'SPLE4',
+  '床付き布わく受けパイプ（SPLE6）': 'SPLE6',
+  '床付き布わく受けパイプ（SPLE9）': 'SPLE9',
+  '床付き布わく受けパイプ（SPLE12）': 'SPLE12',
+  '方杖（SPS9）': 'SPS9',
+  '方杖（SPS12）': 'SPS12',
+  '方杖（SPS15）': 'SPS15',
+  '方杖（SPS18）': 'SPS18',
   // 壁つなぎ系部材
   '壁つなぎ（160−200）': 'KTS16',
   '壁つなぎ（200−240）': 'KTS20',
@@ -235,25 +251,48 @@ export const DECK_PLACEMENT: Record<WidthMM, DeckPlacement[]> = {
 /** 階段拡幅時の枠幅（アルバトロス仕様: 914 → 1219） */
 export const WIDENING_WIDTH_MM = 1219;
 
-/** 開口用梁（梁枠）の規格。開口幅の合計長に最も近いものを自動選定する */
+/**
+ * 開口用梁（梁わく SPLシリーズ）の規格。開口用梁カタログ準拠。
+ *   SPL36 = 開口2スパン用（3600）／ SPL54 = 3スパン用（5400）／ SPL72 = 4スパン用（7200）
+ * maxOpeningMm はインチ規格の同スパン数（1829×2=3658、×3=5487）を許容するための上限。
+ * 7200 を超える開口は梁わく適用外（マルチトラス材等の個別対応）。
+ */
 export interface BeamSpec {
   name: string; // 部材名（WEIGHT_DICT のキー）
-  lengthMm: number; // 適用開口幅
+  code: string; // 規格コード（SPL36 など）
+  lengthMm: number; // 適用開口幅（呼び寸法）
+  maxOpeningMm: number; // この開口幅まで適用可
   heightMm: number; // 梁せい（3D描画用）
+  needsBrace: boolean; // 方杖（SPS）が必要か（SPL54・72 のみ）
 }
 
 export const BEAM_SPECS: BeamSpec[] = [
-  { name: '梁枠（1.5スパン）', lengthMm: 2743, heightMm: 250 },
-  { name: '梁枠（2スパン）', lengthMm: 3658, heightMm: 250 },
-  { name: '梁枠（3スパン）', lengthMm: 5487, heightMm: 350 },
-  { name: '梁枠（4スパン）', lengthMm: 7316, heightMm: 450 },
+  { name: '梁わく（SPL36）', code: 'SPL36', lengthMm: 3600, maxOpeningMm: 3700, heightMm: 85, needsBrace: false },
+  { name: '梁わく（SPL54）', code: 'SPL54', lengthMm: 5400, maxOpeningMm: 5600, heightMm: 250, needsBrace: true },
+  { name: '梁わく（SPL72）', code: 'SPL72', lengthMm: 7200, maxOpeningMm: 7200, heightMm: 400, needsBrace: true },
 ];
 
-/** 開口幅（mm）に最も近い梁枠を選ぶ */
-export function beamForOpening(lengthMm: number): BeamSpec {
-  let best = BEAM_SPECS[0];
-  for (const b of BEAM_SPECS) {
-    if (Math.abs(b.lengthMm - lengthMm) < Math.abs(best.lengthMm - lengthMm)) best = b;
-  }
-  return best;
+/** 梁わくで対応できる開口幅の上限（mm）。超過はマルチトラス材等を別途拾う */
+export const BEAM_MAX_OPENING_MM = 7200;
+
+/** 開口幅（mm）に適合する梁わくを選ぶ。上限超過は null（適用外） */
+export function beamForOpening(lengthMm: number): BeamSpec | null {
+  if (lengthMm > BEAM_MAX_OPENING_MM) return null;
+  return BEAM_SPECS.find((b) => lengthMm <= b.maxOpeningMm) ?? null;
 }
+
+/** 枠幅 → 床付き布わく受けパイプ（SPLE）。数量は開口内部の節点数（スパン数−1） */
+export const OPENING_SPLE_NAME: Record<WidthMM, string> = {
+  450: '床付き布わく受けパイプ（SPLE4）',
+  610: '床付き布わく受けパイプ（SPLE6）',
+  914: '床付き布わく受けパイプ（SPLE9）',
+  1219: '床付き布わく受けパイプ（SPLE12）',
+};
+
+/** 方杖サイズ（呼び） → 部材名。SPL54・72 使用時に 4本/開口 */
+export const SPS_NAME: Record<number, string> = {
+  18: '方杖（SPS18）',
+  15: '方杖（SPS15）',
+  12: '方杖（SPS12）',
+  9: '方杖（SPS9）',
+};

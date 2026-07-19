@@ -9,7 +9,8 @@ export function BomPanel({ bom }: { bom: Bom }) {
   const memo = useScaffoldStore((s) => s.settings.memo);
   const [showSplit, setShowSplit] = useState(false);
   const v = bom.validation;
-  const hasWarning = v.pillarStatus === 'mismatch' || v.jackBaseStatus !== 'ok';
+  const hasWarning =
+    v.pillarStatus === 'mismatch' || v.jackBaseStatus !== 'ok' || v.openingOverLimit.length > 0;
 
   return (
     <div className="flex min-h-32 flex-1 flex-col gap-2 rounded-xl bg-white/95 p-3 shadow-lg ring-1 ring-slate-200">
@@ -43,6 +44,12 @@ export function BomPanel({ bom }: { bom: Bom }) {
               {v.jackBaseNeeded}／指定{v.jackBaseProvided}）
             </div>
           )}
+          {v.openingOverLimit.map((mm, i) => (
+            <div key={`over-${i}`} className="text-red-600">
+              ⚠ 開口{mm.toLocaleString()}mmは梁わくの上限7,200mmを超えています。
+              7,200より大きい開口には、マルチトラス材を別途拾ってください（この開口の梁わく関連部材は未計上）
+            </div>
+          ))}
         </div>
       )}
 

@@ -18,7 +18,15 @@
  *   - 層間ネット: 段数 × ceil(全長/5.5m)、ブラケット: 段数 × 節点数
  *   - メッシュシート: スパンサイズごと × ceil(設置段/3)、妻側は枠幅ごと
  */
-import { DECK_LAYOUT, SPEC_MAP, WALL_TIE_NAME, WEIGHT_DICT, beamForOpening } from '../catalog/albatross';
+import {
+  DECK_LAYOUT,
+  OPENING_SPLE_NAME,
+  SPEC_MAP,
+  SPS_NAME,
+  WALL_TIE_NAME,
+  WEIGHT_DICT,
+  beamForOpening,
+} from '../catalog/albatross';
 import { pillarComboFor } from '../model/fitting';
 import {
   SPANS,
@@ -54,6 +62,8 @@ export interface BomValidation {
   jackBaseStatus: 'ok' | 'under' | 'over';
   jackBaseNeeded: number;
   jackBaseProvided: number;
+  /** 梁わく上限（7200mm）を超えた開口幅のリスト（マルチトラス材等の個別対応が必要） */
+  openingOverLimit: number[];
 }
 
 export interface Bom {
@@ -94,10 +104,18 @@ function orderedKeys(): string[] {
     ...byWidth('短手布材'),
     ...antiKeys,
     '階段（セット）',
-    '梁枠（1.5スパン）',
-    '梁枠（2スパン）',
-    '梁枠（3スパン）',
-    '梁枠（4スパン）',
+    '梁わく（SPL36）',
+    '梁わく（SPL54）',
+    '梁わく（SPL72）',
+    '梁わく受け金具（SPLT）',
+    '床付き布わく受けパイプ（SPLE4）',
+    '床付き布わく受けパイプ（SPLE6）',
+    '床付き布わく受けパイプ（SPLE9）',
+    '床付き布わく受けパイプ（SPLE12）',
+    '方杖（SPS18）',
+    '方杖（SPS15）',
+    '方杖（SPS12）',
+    '方杖（SPS9）',
     ...bySpan('巾木'),
     ...byWidth('妻側手すり'),
     ...byWidth('妻側巾木'),
@@ -157,6 +175,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   let stairSetCount = 0; // 階段セット数（1セット = 連続する最大2スパン）
   let openingCount = 0; // 開口部（梁枠）の数
   let interiorNodeCount = 0; // 開口内部の節点数（地上に建地が無い）
+  const openingOverLimit: number[] = []; // 梁わく上限超過の開口幅
   const cumsMm = cumulativeHeights(s);
   let nodeCount = 0;
 
@@ -210,9 +229,13 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       add('敷板（2m）', n2 * 2);
     }
 
-    // --- 開口部（梁枠）: PDF「開口用梁」仕様に準拠 ---
-    //   ・梁枠は両構面に2枚／開口
-    //   ・開口内部の節点は梁枠上に支柱を挿す（地上〜梁枠間の支柱・ジャッキ・根がらみなし）
+    // --- 開口部（梁わく）: 開口用梁カタログ準拠 ---
+    //   ・梁わく（SPL）は両構面に2本／開口
+    //   ・梁わく受け金具（SPLT）は 4個／開口
+    //   ・床付き布わく受けパイプ（SPLE 枠幅対応）は開口内部の節点数（スパン数−1）
+    //   ・方杖（SPS）は SPL54・72 のとき 4本／開口
+    //   ・7200mm 超の開口は梁わく適用外 → 検証エラー（マルチトラス材を別途）
+    //   ・開口内部の節点は梁わく上に支柱を挿す（地上〜梁わく間の支柱・ジャッキ・根がらみなし）
     //   ・開口層の壁面部材（手すり/ブレス/アンチ/巾木/短手布材）を差し引く
     for (const g of openingGroups(run.bays)) {
       openingCount += 1;
@@ -220,7 +243,15 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       const interior = openingInteriorNodes(g);
       interiorNodeCount += interior.length;
 
-      add(beamForOpening(g.lengthMm).name, 2);
+      const beam = beamForOpening(g.lengthMm);
+      if (beam) {
+        add(beam.name, 2);
+        add('梁わく受け金具（SPLT）', 4);
+        add(OPENING_SPLE_NAME[run.width], interior.length);
+        if (beam.needsBrace) add(SPS_NAME[s.spsSize], 4);
+      } else {
+        openingOverLimit.push(g.lengthMm);
+      }
 
       // 支柱: 内部節点の全高分を引き、梁枠上（総高さ−開口高さ）分を積み直す
       const shortHeightMm = heightMm - cumsMm[oLv];
@@ -388,6 +419,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
             : 'ok',
     jackBaseNeeded: jackBaseNeeded + stairExtraNodes,
     jackBaseProvided,
+    openingOverLimit,
   };
 
   // --- 輸送提案（sub-alba 準拠） ---
