@@ -38,6 +38,7 @@ import {
   resolveStairLevels,
   resolveToeboardLevels,
   runLength,
+  runSegments,
   stairGroups,
   totalHeightMm,
   widenedBaySet,
@@ -74,6 +75,7 @@ export interface Bom {
   bayCount: number;
   stairCount: number; // 階段セット数
   openingCount: number; // 開口部（梁枠）の数
+  cornerCount: number; // 直角コーナー数
   nodeCount: number;
   pillarText: string;
   transportUnic: string;
@@ -175,6 +177,8 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   let stairSetCount = 0; // 階段セット数（1セット = 連続する最大2スパン）
   let openingCount = 0; // 開口部（梁枠）の数
   let interiorNodeCount = 0; // 開口内部の節点数（地上に建地が無い）
+  let cornerCount = 0; // 直角コーナー数
+  let cornerSharedNodeCount = 0; // コーナーで支柱兼用となる節点数（ジャッキ不要）
   const openingOverLimit: number[] = []; // 梁わく上限超過の開口幅
   const cumsMm = cumulativeHeights(s);
   let nodeCount = 0;
@@ -182,11 +186,16 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   const activeRuns = runs.filter((r) => r.bays.length > 0);
 
   for (const run of activeRuns) {
-    const nodes = run.bays.length + 1;
+    // 直線区間とコーナー。コーナーでは節点が両区間に1つずつでき、合計は bays+1+コーナー数
+    const { segments } = runSegments(run);
+    const perpCorners = segments
+      .map((seg) => seg.cornerAtStart)
+      .filter((c): c is NonNullable<typeof c> => !!c && c.perpendicular);
+    const nodes = run.bays.length + 1 + perpCorners.length;
     const legs = nodes * 2; // 内外2列分の建地
     nodeCount += nodes;
     bayCount += run.bays.length;
-    stairSetCount += stairGroups(run.bays).length;
+    for (const seg of segments) stairSetCount += stairGroups(seg.bays).length;
 
     for (const [len, count] of Object.entries(pillarCombo)) {
       add(`支柱（${len}）`, count * legs);
@@ -237,7 +246,8 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     //   ・7200mm 超の開口は梁わく適用外 → 検証エラー（マルチトラス材を別途）
     //   ・開口内部の節点は梁わく上に支柱を挿す（地上〜梁わく間の支柱・ジャッキ・根がらみなし）
     //   ・開口層の壁面部材（手すり/ブレス/アンチ/巾木/短手布材）を差し引く
-    for (const g of openingGroups(run.bays)) {
+    for (const seg of segments)
+    for (const g of openingGroups(seg.bays)) {
       openingCount += 1;
       const oLv = Math.min(g.levels, levels);
       const interior = openingInteriorNodes(g);
@@ -268,7 +278,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       sub(`短手布材（${run.width}）`, interior.length * oLv);
 
       for (const bi of g.bayIndices) {
-        const bay = run.bays[bi];
+        const bay = seg.bays[bi];
         sub(`長手手すり（${bay.span}）`, oLv * railsPerBayLevel);
         sub(`ブレス（${bay.span}）`, oLv * bracesPerBayLevel);
         const antiInOpening = antiLevels.filter((l) => l <= oLv).length;
@@ -281,10 +291,25 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
         }
       }
     }
+
+    // --- コーナー（L字直角）: 勝ち軸に端部手すり・負け軸コーナー節点は支柱兼用 ---
+    //   ・端部手すり: 妻側手すり（二段）× アンチ設置段
+    //   ・支柱兼用: 負け軸コーナー節点の建地（内外2本）の支柱・ジャッキ・根がらみを省略
+    for (const c of perpCorners) {
+      void c;
+      cornerCount += 1;
+      cornerSharedNodeCount += 1;
+      add(`妻側手すり（${run.width}）`, antiLevels.length * 2);
+      for (const [len, count] of Object.entries(pillarCombo)) {
+        sub(`支柱（${len}）`, count * 2);
+      }
+      if (s.jackBaseMode !== 'none' && s.negarami) sub('根がらみ支柱', 2);
+    }
   }
 
-  // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用） ---
-  const jackBaseNeeded = s.jackBaseMode !== 'none' ? (nodeCount - interiorNodeCount) * 2 : 0;
+  // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用。コーナー兼用節点は不要） ---
+  const jackBaseNeeded =
+    s.jackBaseMode !== 'none' ? (nodeCount - interiorNodeCount - cornerSharedNodeCount) * 2 : 0;
   const stairExtraNodes = s.stairWidening ? 2 * stairSetCount : 0; // 拡幅時の追加建地（外2列/セット）
   if (s.jackBaseMode !== 'none') {
     if (s.jackBaseOption === 'allSB20') add('ジャッキベース（20）', jackBaseNeeded + stairExtraNodes);
@@ -311,24 +336,26 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       if (s.jackBaseMode !== 'none' && s.negarami) add('根がらみ支柱', stairExtraNodes);
 
       for (const run of activeRuns) {
-        const groups = stairGroups(run.bays);
-        if (groups.length === 0) continue;
+        for (const seg of runSegments(run).segments) {
+          const groups = stairGroups(seg.bays);
+          if (groups.length === 0) continue;
 
-        if (run.width === 914) {
-          for (const group of groups) {
-            // 内列（セット内の節点 = スパン数+1）: 短手布材 914 → 1219 差替
-            //   2スパンセットで 3列 = sub-alba の「内3列」
-            swap('短手布材（914）', '短手布材（1219）', (group.length + 1) * levels);
-            // 外2列: 914ラインの追加建地に 305 を追加
-            add('短手布材（305）', 2 * levels);
+          if (run.width === 914) {
+            for (const group of groups) {
+              // 内列（セット内の節点 = スパン数+1）: 短手布材 914 → 1219 差替
+              //   2スパンセットで 3列 = sub-alba の「内3列」
+              swap('短手布材（914）', '短手布材（1219）', (group.length + 1) * levels);
+              // 外2列: 914ラインの追加建地に 305 を追加
+              add('短手布材（305）', 2 * levels);
+            }
+            // 拡幅範囲（階段セット＋両隣）のアンチ 24 → 50 差替
+            for (const i of widenedBaySet(seg.bays)) {
+              const span = seg.bays[i].span;
+              swap(`アンチ（24/${span}）`, `アンチ（50/${span}）`, antiLevels.length);
+            }
+          } else {
+            add('短手布材（305）', 5 * groups.length * levels);
           }
-          // 拡幅範囲（階段セット＋両隣）のアンチ 24 → 50 差替
-          for (const i of widenedBaySet(run.bays)) {
-            const span = run.bays[i].span;
-            swap(`アンチ（24/${span}）`, `アンチ（50/${span}）`, antiLevels.length);
-          }
-        } else {
-          add('短手布材（305）', 5 * groups.length * levels);
         }
       }
     }
@@ -472,6 +499,7 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
     bayCount,
     stairCount: stairSetCount,
     openingCount,
+    cornerCount,
     nodeCount,
     pillarText: pillarComboText(pillarCombo),
     transportUnic,

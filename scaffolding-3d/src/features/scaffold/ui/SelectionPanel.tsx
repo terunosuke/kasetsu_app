@@ -1,7 +1,19 @@
 'use client';
 
-import { SPANS, openingGroups, runLength, type SpanMM, type WidthMM, WIDTHS } from '../model/types';
+import {
+  SPANS,
+  openingGroups,
+  runLength,
+  runSegments,
+  type SpanMM,
+  type Vec2,
+  type WidthMM,
+  WIDTHS,
+} from '../model/types';
 import { useScaffoldStore } from '../store/useScaffoldStore';
+
+/** 軸ラベル（コーナー勝ち負け選択用） */
+const axisLabel = (dir: Vec2): string => (dir.x !== 0 ? '横方向（X）' : '縦方向（Z）');
 
 const selectCls =
   'rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800';
@@ -50,6 +62,44 @@ export function SelectionPanel() {
           ))}
         </select>
       </div>
+
+      {/* コーナー（直角）の勝ち負け */}
+      {(() => {
+        const corners = runSegments(run).corners.filter((c) => c.perpendicular);
+        if (corners.length === 0) return null;
+        return (
+          <div className="flex flex-col gap-1.5 rounded-md bg-indigo-50 px-2 py-1.5">
+            {corners.map((c, ci) => {
+              const cornerBay = run.bays[c.bayIndex];
+              return (
+                <div key={ci} className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-indigo-700">
+                    コーナー{corners.length > 1 ? ci + 1 : ''} 勝ち軸
+                  </span>
+                  <div className="flex gap-1">
+                    {(['prev', 'next'] as const).map((winKey) => (
+                      <button
+                        key={winKey}
+                        className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                          c.winner === winKey
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-indigo-100'
+                        }`}
+                        onClick={() => st().setCornerWin(run.id, cornerBay.id, winKey)}
+                      >
+                        {axisLabel(winKey === 'prev' ? c.dirPrev : c.dirNext)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <p className="text-[10px] leading-relaxed text-indigo-500">
+              勝ち軸のアンチを角の端まで通し、端部手すりを設置。負け軸は勝ち軸の面まで寄せます
+            </p>
+          </div>
+        );
+      })()}
 
       {selectedIds.length > 0 && (
         <>
