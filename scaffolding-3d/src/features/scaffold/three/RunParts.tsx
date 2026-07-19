@@ -224,6 +224,7 @@ export function RunParts({
   paint = {},
   selectedBayIds,
   onPickBay,
+  onPickBays,
   onPickRun,
   onContextMenu,
 }: {
@@ -232,6 +233,8 @@ export function RunParts({
   paint?: Paint;
   selectedBayIds?: Set<string> | null;
   onPickBay?: (bayId: string, mods: SelectModifiers) => void;
+  /** 複数ベイの一括選択（開口部クリック時にグループ全体を選択） */
+  onPickBays?: (bayIds: string[]) => void;
   /** ベイ以外の部材（支柱・短手布材など）をクリックしたときの列選択 */
   onPickRun?: () => void;
   /** 右クリック（画面座標つき） */
@@ -715,21 +718,47 @@ export function RunParts({
           const pb = pts[endN];
           return { x: (pa.x + pb.x) / 2, z: (pa.z + pb.z) / 2 };
         })();
+        const groupBayIds = g.bayIndices.map((bi) => run.bays[bi].id);
+        const groupSelected = groupBayIds.some((id) => selectedBayIds?.has(id));
+        const pickGroup = (e: ThreeEvent<MouseEvent>) => {
+          e.stopPropagation();
+          if (onPickBays) onPickBays(groupBayIds);
+          else if (onPickBay)
+            onPickBay(firstBay.id, {
+              shift: e.nativeEvent.shiftKey,
+              ctrl: e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+            });
+        };
+        const alongXBeam = Math.abs(firstBay.dir.x) > 0;
+        const openLen = g.lengthMm * M;
         return (
           <group
             key={`beam-${gi}`}
-            onClick={
-              onPickBay
+            onClick={onPickBay || onPickBays ? pickGroup : undefined}
+            onContextMenu={
+              onContextMenu
                 ? (e: ThreeEvent<MouseEvent>) => {
                     e.stopPropagation();
-                    onPickBay(firstBay.id, {
-                      shift: e.nativeEvent.shiftKey,
-                      ctrl: e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
-                    });
+                    e.nativeEvent.preventDefault();
+                    if (onPickBays) onPickBays(groupBayIds);
+                    onContextMenu(e.nativeEvent.clientX, e.nativeEvent.clientY, firstBay.id);
                   }
                 : undefined
             }
           >
+            {/* 開口全体のクリック領域（選択中は薄青ハイライト） */}
+            <mesh
+              position={[groundMid.x, topY / 2, groundMid.z]}
+              scale={alongXBeam ? [openLen * 0.98, topY, w * 0.7] : [w * 0.7, topY, openLen * 0.98]}
+              geometry={unitBox}
+            >
+              <meshStandardMaterial
+                color={HIGHLIGHT}
+                transparent
+                opacity={groupSelected && paint.opacity === undefined ? 0.15 : 0}
+                depthWrite={false}
+              />
+            </mesh>
             {faces.map((dMm, fi) => {
               const pA = (() => { const p = pts[startN]; const perp = perpAt(startN === run.bays.length ? startN - 1 : startN); const off = frontOff + dMm * M; return { x: p.x + perp.x * off, z: p.z + perp.z * off }; })();
               const pB = (() => { const p = pts[endN]; const perp = perpAt(endN > 0 ? endN - 1 : 0); const off = frontOff + dMm * M; return { x: p.x + perp.x * off, z: p.z + perp.z * off }; })();

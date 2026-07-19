@@ -125,6 +125,57 @@ export function SelectionPanel() {
                     </select>
                   </div>
                 )}
+                {allOpening && groupsForSel.length === 1 && (() => {
+                  const g = groupsForSel[0];
+                  const first = g.bayIndices[0];
+                  const last = g.bayIndices[g.bayIndices.length - 1];
+                  const growRight =
+                    last + 1 < run.bays.length &&
+                    !run.bays[last + 1].isStair &&
+                    !run.bays[last + 1].openingLevels
+                      ? run.bays[last + 1].id
+                      : null;
+                  const growLeft =
+                    first - 1 >= 0 &&
+                    !run.bays[first - 1].isStair &&
+                    !run.bays[first - 1].openingLevels
+                      ? run.bays[first - 1].id
+                      : null;
+                  const grow = growRight ?? growLeft;
+                  const shrinkId = g.bayIndices.length > 1 ? run.bays[last].id : null;
+                  return (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-slate-600">開口のスパン数</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="h-6 w-6 rounded-md bg-slate-100 text-sm font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                          disabled={!shrinkId}
+                          title="開口を1スパン狭める"
+                          onClick={() => {
+                            st().setOpeningForBays(run.id, [shrinkId!], null);
+                            st().selectBays(run.id, groupBayIds.filter((id) => id !== shrinkId));
+                          }}
+                        >
+                          −
+                        </button>
+                        <span className="w-14 text-center text-xs font-semibold text-slate-800">
+                          {g.bayIndices.length}スパン
+                        </span>
+                        <button
+                          className="h-6 w-6 rounded-md bg-slate-100 text-sm font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                          disabled={!grow}
+                          title="隣のスパンへ開口を広げる"
+                          onClick={() => {
+                            st().setOpeningForBays(run.id, [grow!], g.levels);
+                            st().selectBays(run.id, [...groupBayIds, grow!]);
+                          }}
+                        >
+                          ＋
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {allOpening && (
                   <p className="-mt-1 text-[10px] leading-relaxed text-amber-600">
                     梁枠は開口幅（1.5〜4スパン相当）で自動選定・両構面2枚。開口上部の積載は800kg以下、

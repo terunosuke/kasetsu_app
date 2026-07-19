@@ -5,7 +5,7 @@
  * スパン変更・階段化は「選択中のスパン」（未選択なら列全体）に適用する。
  */
 import { useEffect } from 'react';
-import { SPANS, type SpanMM } from '../model/types';
+import { SPANS, openingGroups, type SpanMM } from '../model/types';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 
 export function ContextMenu() {
@@ -94,6 +94,38 @@ export function ContextMenu() {
             ? '開口部を解除する'
             : '開口部にする（梁枠）'}
         </button>
+
+        {(() => {
+          // 対象に開口ベイが含まれる場合: 高さのクイック変更（グループ全体に適用）
+          const touched = openingGroups(run.bays).filter((g) =>
+            g.bayIndices.some((bi) => targetIds.includes(run.bays[bi].id)),
+          );
+          if (touched.length === 0) return null;
+          const ids = touched.flatMap((g) => g.bayIndices.map((bi) => run.bays[bi].id));
+          return (
+            <div className="px-2 py-1">
+              <p className="mb-1 text-slate-600">開口の高さ</p>
+              <div className="flex gap-1">
+                {[1, 2, 3].map((n) => (
+                  <button
+                    key={n}
+                    className={`rounded-md px-2 py-0.5 font-semibold ${
+                      touched[0].levels === n
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-amber-100 hover:text-amber-700'
+                    }`}
+                    onClick={() => {
+                      st().setOpeningForBays(run.id, ids, n);
+                      st().closeContextMenu();
+                    }}
+                  >
+                    {n}層
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="my-1 border-t border-slate-100" />
 
