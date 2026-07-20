@@ -959,8 +959,8 @@ export function RunParts({
 
 /**
  * コーナー（直角）の勝ち軸側に描く追加部材:
- *   ・アンチ延長（コーナー端＝負け軸の外面まで W/2 伸ばす）
- *   ・端部手すり（延長部の外縁・二段 H450+H900、アンチ設置段ごと）
+ *   ・端部手すり（勝ち軸の最端部の枠ライン・二段 H450+H900、アンチ設置段ごと）
+ * 突き付け納まり: 勝ち軸のアンチは自スパンで角まで届き、負け軸は端部枠を勝ち軸に接するだけ。
  */
 export function CornerParts({
   corner,
@@ -978,42 +978,24 @@ export function CornerParts({
   const antiLevels = resolveAntiLevels(settings);
   const w = width * M;
   const frontOff = -w / 2;
-  const halfW = w / 2;
 
   const winDir = corner.winner === 'prev' ? corner.dirPrev : corner.dirNext;
   const perp = { x: -winDir.z, z: winDir.x };
   const base = { x: corner.base.x * M, z: corner.base.z * M };
-  const ext = corner.extendDir;
-  const alongX = Math.abs(winDir.x) > 0;
 
-  const at = (dMm: number, extM: number): P2 => ({
-    x: base.x + perp.x * (frontOff + dMm * M) + ext.x * extM,
-    z: base.z + perp.z * (frontOff + dMm * M) + ext.z * extM,
+  const at = (dMm: number): P2 => ({
+    x: base.x + perp.x * (frontOff + dMm * M),
+    z: base.z + perp.z * (frontOff + dMm * M),
   });
 
   return (
     <group>
       {antiLevels.map((level) => {
         const y0 = baseY + cums[level - 1];
-        const railA = at(0, halfW);
-        const railB = at(width, halfW);
+        const railA = at(0);
+        const railB = at(width);
         return (
           <group key={level}>
-            {/* アンチ延長（勝ち軸の敷き並べを負け軸の外面まで） */}
-            {DECK_PLACEMENT[width].map((pl, pi) => {
-              const c = at(pl.centerMm, halfW / 2);
-              const dw = pl.widthMm * M;
-              const dl = halfW * 0.97;
-              return (
-                <Box
-                  key={pi}
-                  center={[c.x, y0 + DECK_LIFT + DECK_T / 2, c.z]}
-                  size={alongX ? [dl, DECK_T, dw] : [dw, DECK_T, dl]}
-                  color={pl.widthMm <= 250 ? C_DECK_NARROW : C_DECK}
-                  paint={paint}
-                />
-              );
-            })}
             {/* 端部手すり（勝ち軸の最端部・二段） */}
             <Bar a={[railA.x, y0 + 0.45, railA.z]} b={[railB.x, y0 + 0.45, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
             <Bar a={[railA.x, y0 + 0.9, railA.z]} b={[railB.x, y0 + 0.9, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
