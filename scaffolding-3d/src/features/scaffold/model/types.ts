@@ -409,10 +409,11 @@ export function runSegments(run: Pick<Run, 'origin' | 'bays' | 'width'>): {
           offset.z += dirNext.z * halfW;
         }
       } else {
-        // 後の軸が勝ち: 後区間（勝ち）を負け軸の外面まで W/2 スライドし、始端から手前に延長
+        // 後の軸が勝ち: 後区間を前方(dirPrev)へ W/2 ずらして負け軸の端面に側面を接し、
+        // さらに手前(−dirNext)へ W/2 引いて始端枠を負け軸の外面に揃える（突き付け）
         if (perpendicular) {
-          offset.x += dirPrev.x * halfW;
-          offset.z += dirPrev.z * halfW;
+          offset.x += (dirPrev.x - dirNext.x) * halfW;
+          offset.z += (dirPrev.z - dirNext.z) * halfW;
         }
         base = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
         extendDir = { x: -dirNext.x, z: -dirNext.z };
