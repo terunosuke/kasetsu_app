@@ -337,11 +337,15 @@ export function openingInteriorNodes(group: OpeningGroup): number[] {
 // ============ コーナー（L字直角）処理 ============
 //
 // 列の途中で向きが変わる位置をコーナーとし、直線区間（セグメント）に分割する。
-// 直角コーナーでは勝ち軸（cornerWin、デフォルト=手前の軸）を決め、
-//   ・負け軸の区間を勝ち軸の面まで W/2 シフト（重なり解消）
-//   ・勝ち軸のアンチをコーナー端（負け軸の外面）まで延長
-//   ・勝ち軸の最端部（延長部の外縁）に端部手すり
-// を適用する。アルバはさらに負け軸コーナー節点の支柱を勝ち軸と兼用（建地省略）。
+// 直角コーナーの納まり（突き付け＋角スパン）:
+//   ・手前区間（負け側でも位置は変えない）はコーナー節点で終わる
+//   ・後区間は「前方(dirPrev)+進行方向(dirNext) に W/2 ずつ」シフトし、
+//     手前区間の端部の先に横付けする
+//   ・その間にできる W×W の角ブロックを「角スパン（長さ=枠幅）」として勝ち軸が持つ
+//     （角スパンのアンチ・外面ブレス/手すり・端部手すり・外側の建地を描画/計上）
+//   ・角ブロックの支柱は手前区間の端部支柱・後区間の始端支柱と共有（アルバは兼用）
+//
+// cornerWin はどちらの軸が角スパンを持つか（デフォルト 'prev' = 先に描いた軸）。
 
 /** 直角コーナーの情報 */
 export interface CornerInfo {
@@ -350,10 +354,8 @@ export interface CornerInfo {
   winner: 'prev' | 'next';
   dirPrev: Vec2;
   dirNext: Vec2;
-  /** 勝ち軸のコーナー側端点（シフト適用後、mm） */
+  /** 手前区間の終端節点（シフト適用後、mm）。角ブロックはここから dirPrev 方向に W 進み、dirNext 直交に ±W/2 */
   base: Vec2;
-  /** アンチ延長の方向（勝ち軸端点から外向き） */
-  extendDir: Vec2;
   /** 直交コーナーか（折返し等 false のときは位置調整なし） */
   perpendicular: boolean;
 }
@@ -398,27 +400,15 @@ export function runSegments(run: Pick<Run, 'origin' | 'bays' | 'width'>): {
       const perpendicular =
         Math.abs(dirPrev.x * dirNext.x + dirPrev.z * dirNext.z) < 0.5;
       const winner = bays[from].cornerWin ?? 'prev';
-      let base: Vec2;
-      let extendDir: Vec2;
-      if (winner === 'prev') {
-        // 手前の軸が勝ち: 勝ち軸端点は前区間の終端。負け軸（後区間）を前方に W/2 シフト
-        base = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
-        extendDir = dirPrev;
-        if (perpendicular) {
-          offset.x += dirNext.x * halfW;
-          offset.z += dirNext.z * halfW;
-        }
-      } else {
-        // 後の軸が勝ち: 後区間を前方(dirPrev)へ W/2 ずらして負け軸の端面に側面を接し、
-        // さらに手前(−dirNext)へ W/2 引いて始端枠を負け軸の外面に揃える（突き付け）
-        if (perpendicular) {
-          offset.x += (dirPrev.x - dirNext.x) * halfW;
-          offset.z += (dirPrev.z - dirNext.z) * halfW;
-        }
-        base = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
-        extendDir = { x: -dirNext.x, z: -dirNext.z };
+      // 角ブロックの基準 = 手前区間の終端節点（シフト適用前のオフセットで確定）
+      const base: Vec2 = { x: raw[from].x + offset.x, z: raw[from].z + offset.z };
+      // 後区間は「前方 W/2 + 進行方向 W/2」シフト → 手前区間の端の先に横付けし、
+      // 間の W×W ブロックを角スパンが埋める
+      if (perpendicular) {
+        offset.x += (dirPrev.x + dirNext.x) * halfW;
+        offset.z += (dirPrev.z + dirNext.z) * halfW;
       }
-      cornerAtStart = { bayIndex: from, winner, dirPrev, dirNext, base, extendDir, perpendicular };
+      cornerAtStart = { bayIndex: from, winner, dirPrev, dirNext, base, perpendicular };
       corners.push(cornerAtStart);
     }
 

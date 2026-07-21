@@ -178,7 +178,6 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
   let openingCount = 0; // 開口部（梁枠）の数
   let interiorNodeCount = 0; // 開口内部の節点数（地上に建地が無い）
   let cornerCount = 0; // 直角コーナー数
-  let cornerSharedNodeCount = 0; // コーナーで支柱兼用となる節点数（ジャッキ不要）
   const openingOverLimit: number[] = []; // 梁わく上限超過の開口幅
   const cumsMm = cumulativeHeights(s);
   let nodeCount = 0;
@@ -292,24 +291,34 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
       }
     }
 
-    // --- コーナー（L字直角）: 勝ち軸に端部手すり・負け軸コーナー節点は支柱兼用 ---
+    // --- コーナー（L字直角）: 角スパン（長さ=枠幅）を勝ち軸が持つ突き付け納まり ---
+    //   ・支柱・ジャッキ・根がらみ: 節点数（bays+1+コーナー数）で計上済み
+    //     （角ブロックの4本のうち3本は前後区間の端部支柱と共有、外側1本が追加分）
     //   ・端部手すり: 妻側手すり（二段）× アンチ設置段
-    //   ・支柱兼用: 負け軸コーナー節点の建地（内外2本）の支柱・ジャッキ・根がらみを省略
+    //   ・端部ラインの短手布材・角スパンのアンチ・外面（ブレス/二段手すり）・巾木を計上
     for (const c of perpCorners) {
       void c;
       cornerCount += 1;
-      cornerSharedNodeCount += 1;
-      add(`妻側手すり（${run.width}）`, antiLevels.length * 2);
-      for (const [len, count] of Object.entries(pillarCombo)) {
-        sub(`支柱（${len}）`, count * 2);
+      const cw = run.width;
+      add(`妻側手すり（${cw}）`, antiLevels.length * 2);
+      add(`短手布材（${cw}）`, levels);
+      for (const deckType of DECK_LAYOUT[run.width]) {
+        const key = `アンチ（${deckType}/${cw}）`;
+        if (WEIGHT_DICT[key] !== undefined) add(key, antiLevels.length);
       }
-      if (s.jackBaseMode !== 'none' && s.negarami) sub('根がらみ支柱', 2);
+      if (s.sideMode === 'bothRail') {
+        if (WEIGHT_DICT[`長手手すり（${cw}）`] !== undefined) add(`長手手すり（${cw}）`, levels * 2);
+      } else if (WEIGHT_DICT[`ブレス（${cw}）`] !== undefined) {
+        add(`ブレス（${cw}）`, levels);
+      }
+      if (toeFaces > 0 && WEIGHT_DICT[`巾木（${cw}）`] !== undefined) {
+        add(`巾木（${cw}）`, toeLevels.length);
+      }
     }
   }
 
-  // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用。コーナー兼用節点は不要） ---
-  const jackBaseNeeded =
-    s.jackBaseMode !== 'none' ? (nodeCount - interiorNodeCount - cornerSharedNodeCount) * 2 : 0;
+  // --- ジャッキベース（節点×2列。custom 時は入力値をそのまま採用） ---
+  const jackBaseNeeded = s.jackBaseMode !== 'none' ? (nodeCount - interiorNodeCount) * 2 : 0;
   const stairExtraNodes = s.stairWidening ? 2 * stairSetCount : 0; // 拡幅時の追加建地（外2列/セット）
   if (s.jackBaseMode !== 'none') {
     if (s.jackBaseOption === 'allSB20') add('ジャッキベース（20）', jackBaseNeeded + stairExtraNodes);

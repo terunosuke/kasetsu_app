@@ -95,7 +95,7 @@ export function SelectionPanel() {
               );
             })}
             <p className="text-[10px] leading-relaxed text-indigo-500">
-              勝ち軸のアンチを角の端まで通し、端部手すりを設置。負け軸は勝ち軸の面まで寄せます
+              勝ち軸が角スパン（枠幅ぶん）を持って角まで通り、端部手すりを設置。負け軸の端部枠は突き付けで、角の支柱は兼用します
             </p>
           </div>
         );
