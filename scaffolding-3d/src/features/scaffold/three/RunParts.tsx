@@ -235,9 +235,6 @@ export interface RunPartsProps {
   /** 始端/終端に妻側部材（手すり・巾木・シート）を出すか（コーナー接続端は false） */
   tsumaAtStart?: boolean;
   tsumaAtEnd?: boolean;
-  /** コーナーの負け軸側端: 建地・ジャッキ・根がらみを省略（勝ち軸の支柱と兼用） */
-  skipLegsAtStart?: boolean;
-  skipLegsAtEnd?: boolean;
   /** 枠幅・全長ラベルを出すか（複数区間では先頭区間のみ） */
   showRunLabel?: boolean;
   /** 全長ラベルの値（区間分割時に列全体の値を渡す） */
@@ -255,8 +252,6 @@ export function RunParts({
   onContextMenu,
   tsumaAtStart = true,
   tsumaAtEnd = true,
-  skipLegsAtStart = false,
-  skipLegsAtEnd = false,
   showRunLabel = true,
   fullLengthMm,
 }: RunPartsProps) {
@@ -460,9 +455,6 @@ export function RunParts({
         const isTsumaEnd =
           (tsumaAtStart && settings.tsumaCount >= 1 && i === 0) ||
           (tsumaAtEnd && settings.tsumaCount >= 2 && i === pts.length - 1);
-        // コーナー負け軸側の節点: 支柱は勝ち軸と兼用（建地・ジャッキ・根がらみを描かない）
-        const hideLegs =
-          (skipLegsAtStart && i === 0) || (skipLegsAtEnd && i === pts.length - 1);
         // 壁つなぎ: 設置スパン（節点）判定
         const tieHere =
           settings.wallTieMode !== 'none' &&
@@ -473,13 +465,9 @@ export function RunParts({
               : i < settings.wallTieSpanCount);
         return (
           <group key={i}>
-            {!hideLegs && (
-              <>
-                <Leg at={front} fromY={legFromY} />
-                <Leg at={back} fromY={legFromY} />
-                {mid914 && <Leg at={mid914} />}
-              </>
-            )}
+            <Leg at={front} fromY={legFromY} />
+            <Leg at={back} fromY={legFromY} />
+            {mid914 && <Leg at={mid914} />}
             {/* 短手布材（各段の下端）。拡幅の外列は 914 + 305 の2分割。開口内部は開口層なし */}
             {Array.from({ length: levels }, (_, li) => {
               if (li + 1 <= oLvNode) return null;
@@ -958,9 +946,12 @@ export function RunParts({
 }
 
 /**
- * コーナー（直角）の勝ち軸側に描く追加部材:
- *   ・端部手すり（勝ち軸の最端部の枠ライン・二段 H450+H900、アンチ設置段ごと）
- * 突き付け納まり: 勝ち軸のアンチは自スパンで角まで届き、負け軸は端部枠を勝ち軸に接するだけ。
+ * コーナー（直角）の角スパン（長さ=枠幅の W×W ブロック）を描く。
+ * 手前区間の終端の先に後区間が横付けされ、その間のブロックを勝ち軸のスパンとして埋める:
+ *   ・角スパンのアンチ（勝ち軸方向・長さ=枠幅）
+ *   ・外側コーナーの建地1本（他の3本は前後区間の端部支柱と共有＝兼用）
+ *   ・勝ち軸の最端部ライン: 短手布材＋端部手すり（二段）
+ *   ・外側の長手面: 側面構成に応じた ブレス（×型）or 二段手すり
  */
 export function CornerParts({
   corner,
@@ -973,32 +964,144 @@ export function CornerParts({
   settings: GlobalSettings;
   paint?: Paint;
 }) {
+  const { levels } = settings;
   const baseY = baseOffsetMm(settings) * M;
+  const jackH = settings.jackBaseMode === 'none' ? 0 : (settings.jackBaseOption === 'allSB40' ? 400 : 200) * M;
   const cums = cumulativeHeights(settings).map((v) => v * M);
-  const antiLevels = resolveAntiLevels(settings);
+  const antiLevels = new Set(resolveAntiLevels(settings));
+  const toeLevels = new Set(resolveToeboardLevels(settings));
+  const totalH = totalHeightMm(settings) * M;
+  const legTop = baseY + totalH;
+  const jointYs = pillarJointHeights(effectivePillarCombo(settings), totalHeightMm(settings)).map(
+    (mm) => baseY + mm * M,
+  );
   const w = width * M;
-  const frontOff = -w / 2;
+  const halfW = w / 2;
+  const wMm = width;
 
-  const winDir = corner.winner === 'prev' ? corner.dirPrev : corner.dirNext;
-  const perp = { x: -winDir.z, z: winDir.x };
+  const e1 = corner.dirPrev;
+  const e2 = corner.dirNext;
   const base = { x: corner.base.x * M, z: corner.base.z * M };
-
-  const at = (dMm: number): P2 => ({
-    x: base.x + perp.x * (frontOff + dMm * M),
-    z: base.z + perp.z * (frontOff + dMm * M),
+  // ブロック内座標: P(u, v) = base + e1×u + e2×v（u: 0..w ／ v: −w/2..+w/2）
+  const P = (u: number, v: number): P2 => ({
+    x: base.x + e1.x * u + e2.x * v,
+    z: base.z + e1.z * u + e2.z * v,
   });
+
+  const winDir = corner.winner === 'prev' ? e1 : e2;
+  const alongX = Math.abs(winDir.x) > 0;
+  const perpW = { x: -winDir.z, z: winDir.x };
+  // 勝ち軸スパンの中心線上の始点・終点（角スパンは長さ w）
+  const spanA = corner.winner === 'prev' ? P(0, 0) : P(halfW, -halfW);
+  const spanB = corner.winner === 'prev' ? P(w, 0) : P(halfW, halfW);
+  const spanMid = { x: (spanA.x + spanB.x) / 2, z: (spanA.z + spanB.z) / 2 };
+  /** 勝ち軸スパンの面ライン（front からの距離 dMm）: {a, b} */
+  const faceLine = (dMm: number) => {
+    const off = -halfW + dMm * M;
+    return {
+      a: { x: spanA.x + perpW.x * off, z: spanA.z + perpW.z * off },
+      b: { x: spanB.x + perpW.x * off, z: spanB.z + perpW.z * off },
+    };
+  };
+  // 開放面（通行側）= 負け軸のある側。'prev'なら +e2 側（後区間）、'next'なら −e1 側（手前区間）
+  const openDir = corner.winner === 'prev' ? e2 : { x: -e1.x, z: -e1.z };
+  const face0 = faceLine(0);
+  const faceW = faceLine(wMm);
+  const dot0 = (face0.a.x - spanMid.x) * openDir.x + (face0.a.z - spanMid.z) * openDir.z;
+  const outerFace = dot0 > 0 ? faceW : face0; // 開放面の反対側
+  // 端部ライン（勝ち軸の最端部）: 'prev' は u=w のライン、'next' は v=−w/2 のライン
+  const endA = corner.winner === 'prev' ? P(w, -halfW) : P(0, -halfW);
+  const endB = corner.winner === 'prev' ? P(w, halfW) : P(w, -halfW);
+  const isBrace = settings.sideMode !== 'bothRail';
+  const deckY = (level: number) => baseY + cums[level - 1];
+
+  // 外側コーナーの建地（P(w, −w/2)）。他の3本は前後区間の支柱と共有
+  const outerLeg = P(w, -halfW);
 
   return (
     <group>
-      {antiLevels.map((level) => {
-        const y0 = baseY + cums[level - 1];
-        const railA = at(0);
-        const railB = at(width);
+      {/* 外側コーナーの建地（ジャッキ・根がらみ・ジョイント込み） */}
+      {settings.jackBaseMode !== 'none' && (
+        <>
+          <Box center={[outerLeg.x, 0.015, outerLeg.z]} size={[0.16, 0.03, 0.16]} color={C_JACK} paint={paint} />
+          <Bar a={[outerLeg.x, 0.03, outerLeg.z]} b={[outerLeg.x, jackH, outerLeg.z]} r={0.017} color={C_JACK} paint={paint} />
+          {settings.negarami && (
+            <Bar a={[outerLeg.x, jackH, outerLeg.z]} b={[outerLeg.x, baseY, outerLeg.z]} r={LEG_R} color={C_NEGARAMI} paint={paint} />
+          )}
+        </>
+      )}
+      <Bar a={[outerLeg.x, baseY, outerLeg.z]} b={[outerLeg.x, legTop, outerLeg.z]} r={LEG_R} color={C_LEG} paint={paint} />
+      {jointYs.map((jy, ji) => (
+        <mesh key={ji} geometry={unitCylinder} position={[outerLeg.x, jy, outerLeg.z]} scale={[0.11, 0.025, 0.11]}>
+          <meshStandardMaterial {...matProps(C_JOINT, paint)} />
+        </mesh>
+      ))}
+
+      {/* 端部ラインの短手布材（各段の下端） */}
+      {Array.from({ length: levels }, (_, li) => {
+        const y = deckY(li + 1);
         return (
-          <group key={level}>
-            {/* 端部手すり（勝ち軸の最端部・二段） */}
-            <Bar a={[railA.x, y0 + 0.45, railA.z]} b={[railB.x, y0 + 0.45, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
-            <Bar a={[railA.x, y0 + 0.9, railA.z]} b={[railB.x, y0 + 0.9, railB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+          <Bar key={`et-${li}`} a={[endA.x, y, endA.z]} b={[endB.x, y, endB.z]} r={TRANSOM_R} color={C_TRANSOM} paint={paint} />
+        );
+      })}
+
+      {/* 段ごと: アンチ・外面（ブレス/二段手すり）・端部手すり・巾木 */}
+      {Array.from({ length: levels }, (_, li) => {
+        const level = li + 1;
+        const y0 = deckY(level);
+        const hasDeck = antiLevels.has(level);
+        const hasToe = toeLevels.has(level);
+        return (
+          <group key={li}>
+            {/* 角スパンのアンチ（勝ち軸方向・長さ=枠幅） */}
+            {hasDeck &&
+              DECK_PLACEMENT[width].map((pl, pi) => {
+                const off = -halfW + pl.centerMm * M;
+                const cx = spanMid.x + perpW.x * off;
+                const cz = spanMid.z + perpW.z * off;
+                const dw = pl.widthMm * M;
+                return (
+                  <Box
+                    key={pi}
+                    center={[cx, y0 + DECK_LIFT + DECK_T / 2, cz]}
+                    size={alongX ? [w * 0.97, DECK_T, dw] : [dw, DECK_T, w * 0.97]}
+                    color={pl.widthMm <= 250 ? C_DECK_NARROW : C_DECK}
+                    paint={paint}
+                  />
+                );
+              })}
+            {/* 外側の長手面: ブレス（×型）or 二段手すり */}
+            {isBrace ? (
+              <group>
+                <Bar a={[outerFace.a.x, y0 + 0.05, outerFace.a.z]} b={[outerFace.b.x, y0 + 0.9, outerFace.b.z]} r={BRACE_R} color={C_BRACE} paint={paint} />
+                <Bar a={[outerFace.b.x, y0 + 0.05, outerFace.b.z]} b={[outerFace.a.x, y0 + 0.9, outerFace.a.z]} r={BRACE_R} color={C_BRACE} paint={paint} />
+              </group>
+            ) : (
+              <group>
+                <Bar a={[outerFace.a.x, y0 + 0.45, outerFace.a.z]} b={[outerFace.b.x, y0 + 0.45, outerFace.b.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                <Bar a={[outerFace.a.x, y0 + 0.9, outerFace.a.z]} b={[outerFace.b.x, y0 + 0.9, outerFace.b.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+              </group>
+            )}
+            {/* 端部手すり（勝ち軸の最端部・二段。アンチ設置段のみ） */}
+            {hasDeck && (
+              <group>
+                <Bar a={[endA.x, y0 + 0.45, endA.z]} b={[endB.x, y0 + 0.45, endB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                <Bar a={[endA.x, y0 + 0.9, endA.z]} b={[endB.x, y0 + 0.9, endB.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+              </group>
+            )}
+            {/* 巾木（外側の長手面） */}
+            {hasToe && settings.toeboardFaces !== 'none' && (
+              <Box
+                center={[
+                  (outerFace.a.x + outerFace.b.x) / 2,
+                  y0 + DECK_LIFT + DECK_T + TOE_H / 2,
+                  (outerFace.a.z + outerFace.b.z) / 2,
+                ]}
+                size={alongX ? [w * 0.98, TOE_H, 0.015] : [0.015, TOE_H, w * 0.98]}
+                color={C_TOE}
+                paint={paint}
+              />
+            )}
           </group>
         );
       })}
@@ -1024,8 +1127,6 @@ export function RunAssembly(props: RunPartsProps) {
           run={{ origin: seg.origin, width: run.width, bays: seg.bays }}
           tsumaAtStart={si === 0}
           tsumaAtEnd={si === segments.length - 1}
-          skipLegsAtStart={!!(seg.cornerAtStart?.perpendicular && seg.cornerAtStart.winner === 'prev')}
-          skipLegsAtEnd={!!(seg.cornerAtEnd?.perpendicular && seg.cornerAtEnd.winner === 'next')}
           showRunLabel={si === 0}
           fullLengthMm={fullLen}
         />
