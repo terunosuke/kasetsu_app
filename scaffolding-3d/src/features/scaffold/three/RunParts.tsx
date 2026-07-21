@@ -1045,6 +1045,33 @@ export function CornerParts({
         );
       })}
 
+      {/* コーナー端部面の外周メッシュシート（外周シートON時のみ・妻側チェックに依存しない） */}
+      {settings.sheet &&
+        (() => {
+          const sheetLevels = settings.sheetLevelMode === 'all' ? levels : settings.sheetLevelCount;
+          const units = Math.ceil(Math.max(0, sheetLevels) / 3);
+          const cx = (endA.x + endB.x) / 2;
+          const cz = (endA.z + endB.z) / 2;
+          const depth = Math.hypot(endB.x - endA.x, endB.z - endA.z);
+          const endAlongX = Math.abs(endB.x - endA.x) > Math.abs(endB.z - endA.z);
+          return Array.from({ length: units }, (_, si) => {
+            const unitH = 5.4;
+            const bottom = baseY + si * unitH;
+            const top = Math.min(bottom + unitH, legTop);
+            if (top - bottom <= 0.01) return null;
+            return (
+              <Box
+                key={`csheet-${si}`}
+                center={[cx, (bottom + top) / 2, cz]}
+                size={endAlongX ? [depth, top - bottom, 0.006] : [0.006, top - bottom, depth]}
+                color={C_SHEET}
+                paint={paint}
+                transparentOpacity={0.3}
+              />
+            );
+          });
+        })()}
+
       {/* 段ごと: アンチ・外面（ブレス/二段手すり）・端部手すり・巾木 */}
       {Array.from({ length: levels }, (_, li) => {
         const level = li + 1;
