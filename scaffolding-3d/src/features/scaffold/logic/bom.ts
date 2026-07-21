@@ -129,6 +129,29 @@ function orderedKeys(): string[] {
   ];
 }
 
+/**
+ * メッシュシートが凸(270°)側に来る直角コーナー数。
+ * その側は角が回り込むため、コーナーごとにLの両辺へ2枚の補助シートが必要になる。
+ * 凹(90°)側なら2辺のシートが角で突き合うため追加不要。
+ */
+function countConvexSheetCorners(run: Run): number {
+  const segs = runSegments(run).segments;
+  let n = 0;
+  for (const seg of segs) {
+    const c = seg.cornerAtStart;
+    if (!c || !c.perpendicular) continue;
+    const winnerBayIdx = c.winner === 'prev' ? c.bayIndex - 1 : c.bayIndex;
+    const winnerFlip = !!run.bays[winnerBayIdx]?.flipSides;
+    const winDir = c.winner === 'prev' ? c.dirPrev : c.dirNext;
+    const perpW = { x: -winDir.z, z: winDir.x };
+    const openDir = c.winner === 'prev' ? c.dirNext : { x: -c.dirPrev.x, z: -c.dirPrev.z };
+    const outerSign = -Math.sign(perpW.x * openDir.x + perpW.z * openDir.z);
+    const sheetSign = winnerFlip ? -1 : 1;
+    if (sheetSign === outerSign) n++;
+  }
+  return n;
+}
+
 /** 支柱構成（1建地あたり）を決める: 手動指定があればそれ、なければ高さから自動 */
 export function effectivePillarCombo(s: GlobalSettings): PillarSelection {
   if (s.pillarOverride) return s.pillarOverride;
@@ -415,13 +438,12 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
           // 妻側は枠幅サイズのシートを流用（sub-alba 準拠で枠幅ごとに算出）
           add(tsumaKey, s.tsumaSheetCount * sheetsPerSpan);
         }
-        // コーナー: 外周シートON時、Lの両辺（端部面＋外周長手面）に妻側サイズのシートを2枚/コーナー
-        //          （妻側チェックには依存しない）
-        const cornerN = runSegments(run).segments.filter(
-          (seg) => seg.cornerAtStart?.perpendicular,
-        ).length;
-        if (cornerN > 0 && WEIGHT_DICT[tsumaKey] !== undefined) {
-          add(tsumaKey, cornerN * sheetsPerSpan * 2);
+        // コーナー: 外周シートON時、メッシュが凸(270°)側に来るコーナーのみ
+        //          Lの両辺（端部面＋外周長手面）に妻側サイズのシートを2枚/コーナー。
+        //          凹(90°)側なら2辺が角で突き合うため追加不要（妻側チェックには依存しない）
+        if (WEIGHT_DICT[tsumaKey] !== undefined) {
+          const convexCorners = countConvexSheetCorners(run);
+          if (convexCorners > 0) add(tsumaKey, convexCorners * sheetsPerSpan * 2);
         }
       }
     }

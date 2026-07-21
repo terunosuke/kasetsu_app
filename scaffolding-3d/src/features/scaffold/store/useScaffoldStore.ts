@@ -86,6 +86,8 @@ interface ScaffoldState {
   setOpeningForBays(runId: string, bayIds: string[], levels: number | null): void;
   /** コーナー（直角）の勝ち軸を設定。bayId = 向きが変わった直後のベイ */
   setCornerWin(runId: string, bayId: string, win: 'prev' | 'next'): void;
+  /** 建物側の面を反転する（辺＝区間ごと）。bayId はその辺に含まれる任意のベイ */
+  toggleSegmentFlip(runId: string, bayId: string): void;
   setRunWidth(runId: string, width: WidthMM): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
@@ -318,6 +320,27 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
           ? { ...run, bays: run.bays.map((b) => (b.id === bayId ? { ...b, cornerWin: win } : b)) }
           : run,
       ),
+    })),
+
+  toggleSegmentFlip: (runId, bayId) =>
+    set((s) => ({
+      history: pushHistory(s),
+      runs: s.runs.map((run) => {
+        if (run.id !== runId) return run;
+        const bays = run.bays;
+        const idx = bays.findIndex((b) => b.id === bayId);
+        if (idx < 0) return run;
+        const sameDir = (a: Bay, b: Bay) => a.dir.x === b.dir.x && a.dir.z === b.dir.z;
+        let lo = idx;
+        let hi = idx;
+        while (lo > 0 && sameDir(bays[lo - 1], bays[lo])) lo--;
+        while (hi < bays.length - 1 && sameDir(bays[hi + 1], bays[hi])) hi++;
+        const next = !bays[idx].flipSides;
+        return {
+          ...run,
+          bays: bays.map((b, i) => (i >= lo && i <= hi ? { ...b, flipSides: next } : b)),
+        };
+      }),
     })),
 
   setRunWidth: (runId, width) =>

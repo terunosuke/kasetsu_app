@@ -101,6 +101,43 @@ export function SelectionPanel() {
         );
       })()}
 
+      {/* 建物側の面（壁つなぎ・層間ネット vs メッシュシート）の反転: 辺（区間）ごと */}
+      {(() => {
+        const segs = runSegments(run).segments;
+        const multi = segs.length > 1;
+        return (
+          <div className="flex flex-col gap-1.5 rounded-md bg-teal-50 px-2 py-1.5">
+            <span className="text-xs font-semibold text-teal-700">建物側の面</span>
+            {segs.map((seg, si) => {
+              const firstBay = seg.bays[0];
+              const flipped = !!firstBay.flipSides;
+              const dir = seg.bays[0].dir;
+              const axis = dir.x !== 0 ? '横（X）' : '縦（Z）';
+              return (
+                <div key={si} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-slate-600">
+                    {multi ? `辺${si + 1}（${axis}・${seg.bays.length}スパン）` : `全体（${seg.bays.length}スパン）`}
+                  </span>
+                  <button
+                    className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                      flipped
+                        ? 'bg-teal-600 text-white'
+                        : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-teal-100'
+                    }`}
+                    onClick={() => st().toggleSegmentFlip(run.id, firstBay.id)}
+                  >
+                    {flipped ? '反転（外＝建物）' : '通常（内＝建物）'}
+                  </button>
+                </div>
+              );
+            })}
+            <p className="text-[10px] leading-relaxed text-teal-600">
+              壁つなぎ・層間ネットを建物側、メッシュシートを外周側に描きます。XYの折れ（コーナー）を境に辺ごとに切り替えられます
+            </p>
+          </div>
+        );
+      })()}
+
       {selectedIds.length > 0 && (
         <>
           <div className="flex items-center justify-between gap-2">
