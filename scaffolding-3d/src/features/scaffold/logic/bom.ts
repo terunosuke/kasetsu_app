@@ -415,12 +415,13 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
           // 妻側は枠幅サイズのシートを流用（sub-alba 準拠で枠幅ごとに算出）
           add(tsumaKey, s.tsumaSheetCount * sheetsPerSpan);
         }
-        // コーナー端部面: 外周シートON時に妻側サイズのシートを追加（妻側チェックに依存しない）
+        // コーナー: 外周シートON時、Lの両辺（端部面＋外周長手面）に妻側サイズのシートを2枚/コーナー
+        //          （妻側チェックには依存しない）
         const cornerN = runSegments(run).segments.filter(
           (seg) => seg.cornerAtStart?.perpendicular,
         ).length;
         if (cornerN > 0 && WEIGHT_DICT[tsumaKey] !== undefined) {
-          add(tsumaKey, cornerN * sheetsPerSpan);
+          add(tsumaKey, cornerN * sheetsPerSpan * 2);
         }
       }
     }
