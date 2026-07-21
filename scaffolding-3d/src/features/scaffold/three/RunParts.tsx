@@ -1045,30 +1045,37 @@ export function CornerParts({
         );
       })}
 
-      {/* コーナー端部面の外周メッシュシート（外周シートON時のみ・妻側チェックに依存しない） */}
+      {/* コーナーの外周メッシュシート（外周シートON時のみ・妻側チェックに依存しない）。
+          Lの両辺＝端部面（endA-endB）と外周側の長手面（outerFace）に1枚ずつ計2枚 */}
       {settings.sheet &&
         (() => {
           const sheetLevels = settings.sheetLevelMode === 'all' ? levels : settings.sheetLevelCount;
           const units = Math.ceil(Math.max(0, sheetLevels) / 3);
-          const cx = (endA.x + endB.x) / 2;
-          const cz = (endA.z + endB.z) / 2;
-          const depth = Math.hypot(endB.x - endA.x, endB.z - endA.z);
-          const endAlongX = Math.abs(endB.x - endA.x) > Math.abs(endB.z - endA.z);
-          return Array.from({ length: units }, (_, si) => {
-            const unitH = 5.4;
-            const bottom = baseY + si * unitH;
-            const top = Math.min(bottom + unitH, legTop);
-            if (top - bottom <= 0.01) return null;
-            return (
-              <Box
-                key={`csheet-${si}`}
-                center={[cx, (bottom + top) / 2, cz]}
-                size={endAlongX ? [depth, top - bottom, 0.006] : [0.006, top - bottom, depth]}
-                color={C_SHEET}
-                paint={paint}
-                transparentOpacity={0.3}
-              />
-            );
+          const faces: [P2, P2, string][] = [
+            [endA, endB, 'end'],
+            [outerFace.a, outerFace.b, 'outer'],
+          ];
+          return faces.flatMap(([a, b, tag]) => {
+            const cx = (a.x + b.x) / 2;
+            const cz = (a.z + b.z) / 2;
+            const depth = Math.hypot(b.x - a.x, b.z - a.z);
+            const faceAlongX = Math.abs(b.x - a.x) > Math.abs(b.z - a.z);
+            return Array.from({ length: units }, (_, si) => {
+              const unitH = 5.4;
+              const bottom = baseY + si * unitH;
+              const top = Math.min(bottom + unitH, legTop);
+              if (top - bottom <= 0.01) return null;
+              return (
+                <Box
+                  key={`csheet-${tag}-${si}`}
+                  center={[cx, (bottom + top) / 2, cz]}
+                  size={faceAlongX ? [depth, top - bottom, 0.006] : [0.006, top - bottom, depth]}
+                  color={C_SHEET}
+                  paint={paint}
+                  transparentOpacity={0.3}
+                />
+              );
+            });
           });
         })()}
 
