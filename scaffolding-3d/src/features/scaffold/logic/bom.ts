@@ -410,10 +410,17 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
         for (const bay of run.bays) {
           add(`メッシュシート（${bay.span}）`, sheetsPerSpan);
         }
-        if (s.tsumaSheetCount > 0) {
+        const tsumaKey = `妻側メッシュシート（${run.width}）`;
+        if (s.tsumaSheetCount > 0 && WEIGHT_DICT[tsumaKey] !== undefined) {
           // 妻側は枠幅サイズのシートを流用（sub-alba 準拠で枠幅ごとに算出）
-          const key = `妻側メッシュシート（${run.width}）`;
-          if (WEIGHT_DICT[key] !== undefined) add(key, s.tsumaSheetCount * sheetsPerSpan);
+          add(tsumaKey, s.tsumaSheetCount * sheetsPerSpan);
+        }
+        // コーナー端部面: 外周シートON時に妻側サイズのシートを追加（妻側チェックに依存しない）
+        const cornerN = runSegments(run).segments.filter(
+          (seg) => seg.cornerAtStart?.perpendicular,
+        ).length;
+        if (cornerN > 0 && WEIGHT_DICT[tsumaKey] !== undefined) {
+          add(tsumaKey, cornerN * sheetsPerSpan);
         }
       }
     }
