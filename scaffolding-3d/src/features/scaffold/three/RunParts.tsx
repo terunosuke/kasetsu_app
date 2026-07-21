@@ -221,7 +221,8 @@ function resolveLevelIndices(
 }
 
 export interface RunPartsProps {
-  run: Pick<Run, 'origin' | 'bays' | 'width'>;
+  // flipSides は辺（区間）単位で解決した値を RunAssembly から受け取る
+  run: Pick<Run, 'origin' | 'bays' | 'width'> & { flipSides?: boolean };
   settings: GlobalSettings;
   paint?: Paint;
   selectedBayIds?: Set<string> | null;
@@ -257,7 +258,9 @@ export function RunParts({
 }: RunPartsProps) {
   const { levels } = settings;
   const w = run.width * M;
-  const frontOff = -w / 2; // 中心線から見た内面（建物側・250アンチ側）建地ラインのオフセット
+  const frontOff = -w / 2; // 中心線から見た内面（-perp側・250アンチ側）建地ラインのオフセット
+  // 建物側の面を反転できる（既定=内面が建物側）。壁つなぎ・層間ネット↔メッシュシートを入れ替える
+  const flip = !!run.flipSides;
   const pts = useMemo(() => nodePoints(run).map((p) => ({ x: p.x * M, z: p.z * M })), [run]);
 
   // ===== 高さの計算（ベース＋各段下端の累積） =====
@@ -501,17 +504,20 @@ export function RunParts({
                   </group>
                 ) : null,
               )}
-            {/* 壁つなぎ（内面＝建物側、段の中間高さに赤球） */}
+            {/* 壁つなぎ（建物側の面、段の中間高さに赤球）。flip で外面側へ */}
             {tieHere &&
-              tieLevels.filter((li) => li >= oLvNode).map((li) => (
-                <mesh
-                  key={`tie-${li}`}
-                  position={[front.x, baseY + (cums[li] + cums[li + 1]) / 2, front.z]}
-                >
-                  <sphereGeometry args={[0.08, 12, 12]} />
-                  <meshStandardMaterial {...matProps(C_WALLTIE, paint)} />
-                </mesh>
-              ))}
+              tieLevels.filter((li) => li >= oLvNode).map((li) => {
+                const tieAt = flip ? back : front;
+                return (
+                  <mesh
+                    key={`tie-${li}`}
+                    position={[tieAt.x, baseY + (cums[li] + cums[li + 1]) / 2, tieAt.z]}
+                  >
+                    <sphereGeometry args={[0.08, 12, 12]} />
+                    <meshStandardMaterial {...matProps(C_WALLTIE, paint)} />
+                  </mesh>
+                );
+              })}
           </group>
         );
       })}
@@ -632,20 +638,24 @@ export function RunParts({
                         />
                       );
                     })}
-                  {/* 層間ネット（内面から建物側へ300mm跳ね出し・段の上端） */}
-                  {netLevels.includes(li) && (
-                    <Box
-                      center={[
-                        mid.x + perp.x * (frontOff - 0.15),
-                        baseY + cums[li + 1],
-                        mid.z + perp.z * (frontOff - 0.15),
-                      ]}
-                      size={alongX ? [spanLen, 0.01, 0.3] : [0.3, 0.01, spanLen]}
-                      color={C_NET}
-                      paint={paint}
-                      transparentOpacity={0.5}
-                    />
-                  )}
+                  {/* 層間ネット（建物側の面から300mm跳ね出し・段の上端）。flip で外面側へ */}
+                  {netLevels.includes(li) &&
+                    (() => {
+                      const netPerp = flip ? frontOff + backOffMm * M + 0.15 : frontOff - 0.15;
+                      return (
+                        <Box
+                          center={[
+                            mid.x + perp.x * netPerp,
+                            baseY + cums[li + 1],
+                            mid.z + perp.z * netPerp,
+                          ]}
+                          size={alongX ? [spanLen, 0.01, 0.3] : [0.3, 0.01, spanLen]}
+                          color={C_NET}
+                          paint={paint}
+                          transparentOpacity={0.5}
+                        />
+                      );
+                    })()}
                 </group>
               );
             })}
@@ -656,7 +666,8 @@ export function RunParts({
               const bottom = Math.max(baseY + si * unitH, sheetBase);
               const top = Math.min(baseY + si * unitH + unitH, legTop);
               if (top - bottom <= 0.01) return null;
-              const line = lineAt(backOffMm + 40);
+              // メッシュシートは外周側の面（flip で建物側→反対＝内面 -40 へ）
+              const line = lineAt(flip ? -40 : backOffMm + 40);
               const cx = (line.a.x + line.b.x) / 2;
               const cz = (line.a.z + line.b.z) / 2;
               return (
@@ -958,11 +969,14 @@ export function CornerParts({
   width,
   settings,
   paint = {},
+  winnerFlip = false,
 }: {
   corner: CornerInfo;
   width: WidthMM;
   settings: GlobalSettings;
   paint?: Paint;
+  /** 勝ち軸（角スパンを持つ辺）の建物側反転。メッシュシートが凸(270°)側か凹(90°)側かの判定に使う */
+  winnerFlip?: boolean;
 }) {
   const { levels } = settings;
   const baseY = baseOffsetMm(settings) * M;
@@ -1009,6 +1023,10 @@ export function CornerParts({
   const faceW = faceLine(wMm);
   const dot0 = (face0.a.x - spanMid.x) * openDir.x + (face0.a.z - spanMid.z) * openDir.z;
   const outerFace = dot0 > 0 ? faceW : face0; // 開放面の反対側
+  // メッシュシートが凸(270°)側にあるか＝角スパン外面(outerFace)の側と勝ち軸のシート面が一致するか
+  const outerSign = dot0 > 0 ? 1 : -1;
+  const sheetSign = winnerFlip ? -1 : 1;
+  const sheetOnConvex = sheetSign === outerSign; // true=270°側=コーナーシート2枚必要
   // 端部ライン（勝ち軸の最端部）: 'prev' は u=w のライン、'next' は v=−w/2 のライン
   const endA = corner.winner === 'prev' ? P(w, -halfW) : P(0, -halfW);
   const endB = corner.winner === 'prev' ? P(w, halfW) : P(w, -halfW);
@@ -1046,8 +1064,10 @@ export function CornerParts({
       })}
 
       {/* コーナーの外周メッシュシート（外周シートON時のみ・妻側チェックに依存しない）。
-          Lの両辺＝端部面（endA-endB）と外周側の長手面（outerFace）に1枚ずつ計2枚 */}
+          凸(270°)側にシートが来る場合のみ、Lの両辺＝端部面＋外周長手面に1枚ずつ計2枚。
+          凹(90°)側なら2辺のシートが角で突き合うので追加不要 */}
       {settings.sheet &&
+        sheetOnConvex &&
         (() => {
           const sheetLevels = settings.sheetLevelMode === 'all' ? levels : settings.sheetLevelCount;
           const units = Math.ceil(Math.max(0, sheetLevels) / 3);
@@ -1150,7 +1170,6 @@ export function CornerParts({
 export function RunAssembly(props: RunPartsProps) {
   const { run, settings } = props;
   const { segments, corners } = useMemo(() => runSegments(run), [run]);
-  if (segments.length <= 1) return <RunParts {...props} />;
   const fullLen = runLength(run);
   return (
     <group>
@@ -1158,7 +1177,13 @@ export function RunAssembly(props: RunPartsProps) {
         <RunParts
           key={si}
           {...props}
-          run={{ origin: seg.origin, width: run.width, bays: seg.bays }}
+          run={{
+            origin: seg.origin,
+            width: run.width,
+            bays: seg.bays,
+            // 辺（区間）ごとの反転: 先頭ベイの値（区間内は共通）
+            flipSides: !!seg.bays[0]?.flipSides,
+          }}
           tsumaAtStart={si === 0}
           tsumaAtEnd={si === segments.length - 1}
           showRunLabel={si === 0}
@@ -1167,15 +1192,21 @@ export function RunAssembly(props: RunPartsProps) {
       ))}
       {corners
         .filter((c) => c.perpendicular)
-        .map((c, ci) => (
-          <CornerParts
-            key={`corner-${ci}`}
-            corner={c}
-            width={run.width}
-            settings={settings}
-            paint={props.paint}
-          />
-        ))}
+        .map((c, ci) => {
+          // 勝ち軸（角スパンを持つ辺）の反転値
+          const winnerBayIdx = c.winner === 'prev' ? c.bayIndex - 1 : c.bayIndex;
+          const winnerFlip = !!run.bays[winnerBayIdx]?.flipSides;
+          return (
+            <CornerParts
+              key={`corner-${ci}`}
+              corner={c}
+              width={run.width}
+              settings={settings}
+              paint={props.paint}
+              winnerFlip={winnerFlip}
+            />
+          );
+        })}
     </group>
   );
 }
