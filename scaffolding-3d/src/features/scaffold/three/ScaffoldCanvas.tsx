@@ -118,6 +118,18 @@ function PlacedRuns() {
               onPickRun={
                 mode === 'select' ? () => useScaffoldStore.getState().selectRun(run.id) : undefined
               }
+              onContextMenu={(x, y, bayId) => {
+                // 足場（スパン）の右クリック = その列を選択して編集メニュー（モード問わず）
+                const st = useScaffoldStore.getState();
+                if (st.mode !== 'select') st.setMode('select');
+                if (st.selection?.runId !== run.id) {
+                  if (bayId) st.selectBay(run.id, bayId);
+                  else st.selectRun(run.id);
+                } else if (bayId && !st.selection.bayIds.includes(bayId)) {
+                  st.selectBay(run.id, bayId);
+                }
+                st.openContextMenu({ x, y, runId: run.id });
+              }}
             />
             {/* 選択中の列の全長ラベル */}
             {isSelected && (
@@ -160,8 +172,12 @@ function Controls() {
 }
 
 export default function ScaffoldCanvas() {
-  // 右クリック（ドラッグでない）で 入力⇔選択 モードを切り替える。
-  // 右ドラッグは回転/パンなので、押下位置からの移動が小さいときだけトグルする。
+  // 右クリックの文脈での出し分け:
+  //   ・足場（スパン）を右クリック → 編集メニュー（各メッシュの onContextMenu が開く）
+  //   ・何もない空きスペースを右クリック → 入力⇔選択 モードを切り替え
+  //   ・右ドラッグ（回転/パン）は切り替えない
+  // contextmenu の発火タイミングは環境差があるため、pointerup 後に一拍おいて
+  // 「編集メニューが開いていなければ空きスペースだった」と判定して切り替える。
   const rightDown = useRef<{ x: number; y: number } | null>(null);
 
   // Esc / Enter: メニューを閉じる → 描画中の列を完成
@@ -187,14 +203,17 @@ export default function ScaffoldCanvas() {
         if (e.button === 2) rightDown.current = { x: e.clientX, y: e.clientY };
       }}
       onPointerUp={(e) => {
-        // 右クリック（ドラッグでない）でモード切替。ドラッグ（回転/パン）は切り替えない。
-        // ※ contextmenu は環境により押下時に発火するためタイミングが不安定。pointerup で判定する。
         if (e.button !== 2) return;
         const start = rightDown.current;
         rightDown.current = null;
+        // ドラッグ（回転/パン）は対象外
         if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) return;
-        const s = useScaffoldStore.getState();
-        s.setMode(s.mode === 'build' ? 'select' : 'build');
+        // 一拍おいて、編集メニューが開いていなければ（＝空きスペース）モードを切り替える
+        setTimeout(() => {
+          const s = useScaffoldStore.getState();
+          if (s.contextMenu) return; // 足場を右クリック→編集メニューが開いた。切替しない
+          s.setMode(s.mode === 'build' ? 'select' : 'build');
+        }, 0);
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
