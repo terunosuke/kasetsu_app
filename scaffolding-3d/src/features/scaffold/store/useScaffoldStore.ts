@@ -89,6 +89,8 @@ interface ScaffoldState {
   /** 建物側の面を反転する（辺＝区間ごと）。bayId はその辺に含まれる任意のベイ */
   toggleSegmentFlip(runId: string, bayId: string): void;
   setRunWidth(runId: string, width: WidthMM): void;
+  /** 選択列の隣（右/左）に、枠幅ぶん平行移動した同じ列を複製追加する */
+  duplicateRunParallel(runId: string, side: 'right' | 'left'): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
   clearAll(): void;
@@ -348,6 +350,29 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
       history: pushHistory(s),
       runs: s.runs.map((run) => (run.id === runId ? { ...run, width } : run)),
     })),
+
+  duplicateRunParallel: (runId, side) =>
+    set((s) => {
+      const src = s.runs.find((r) => r.id === runId);
+      if (!src || src.bays.length === 0) return {};
+      // 「右/左」= 先頭ベイ進行方向に対する直交方向。枠幅ぶん平行移動する
+      const d = src.bays[0].dir;
+      const perp = side === 'right' ? { x: d.z, z: -d.x } : { x: -d.z, z: d.x };
+      const off = src.width; // mm
+      const newRun: Run = {
+        id: newId(),
+        origin: { x: src.origin.x + perp.x * off, z: src.origin.z + perp.z * off },
+        width: src.width,
+        // 形状・開口・階段・コーナー・建物側反転をそのまま複製（新ID）
+        bays: src.bays.map((b) => ({ ...b, id: newId() })),
+      };
+      return {
+        history: pushHistory(s),
+        runs: [...s.runs, newRun],
+        selection: { runId: newRun.id, bayIds: [] },
+        contextMenu: null,
+      };
+    }),
 
   deleteBay: (runId, bayId) =>
     set((s) => {

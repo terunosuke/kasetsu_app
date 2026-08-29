@@ -129,6 +129,32 @@ export function ContextMenu() {
 
         <div className="my-1 border-t border-slate-100" />
 
+        <div className="flex gap-1 px-2 py-1">
+          <button
+            className="flex-1 rounded-md bg-blue-50 px-2 py-1.5 font-semibold text-blue-700 hover:bg-blue-100"
+            onClick={() => {
+              st().duplicateRunParallel(run.id, 'left');
+              st().closeContextMenu();
+            }}
+          >
+            ⬅️ 左に1列追加
+          </button>
+          <button
+            className="flex-1 rounded-md bg-blue-50 px-2 py-1.5 font-semibold text-blue-700 hover:bg-blue-100"
+            onClick={() => {
+              st().duplicateRunParallel(run.id, 'right');
+              st().closeContextMenu();
+            }}
+          >
+            右に1列追加 ➡️
+          </button>
+        </div>
+        <p className="px-2 pb-1 text-[10px] leading-tight text-slate-400">
+          枠幅ぶん隣に同じ列（開口・階段も含む）を複製します
+        </p>
+
+        <div className="my-1 border-t border-slate-100" />
+
         <button
           className="w-full rounded-md px-2 py-1.5 text-left font-semibold text-red-600 hover:bg-red-50"
           onClick={() => {
