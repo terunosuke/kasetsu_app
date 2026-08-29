@@ -129,6 +129,16 @@ export function ContextMenu() {
 
         <div className="my-1 border-t border-slate-100" />
 
+        <button
+          className="w-full rounded-md px-2 py-1.5 text-left font-semibold text-blue-700 hover:bg-blue-50"
+          onClick={() => {
+            st().addSpanAfter(run.id, targetIds[targetIds.length - 1]);
+            st().closeContextMenu();
+          }}
+        >
+          ➕ 隣に1スパン追加
+        </button>
+
         <div className="flex gap-1 px-2 py-1">
           <button
             className="flex-1 rounded-md bg-blue-50 px-2 py-1.5 font-semibold text-blue-700 hover:bg-blue-100"
