@@ -91,6 +91,8 @@ interface ScaffoldState {
   setRunWidth(runId: string, width: WidthMM): void;
   /** 選択列の隣（右/左）に、枠幅ぶん平行移動した同じ列を複製追加する */
   duplicateRunParallel(runId: string, side: 'right' | 'left'): void;
+  /** 指定スパンの直後に、同じ向き・同じ長さのスパンを1つ挿入する（列を延長） */
+  addSpanAfter(runId: string, bayId: string): void;
   deleteBay(runId: string, bayId: string): void;
   deleteRun(runId: string): void;
   clearAll(): void;
@@ -370,6 +372,25 @@ export const useScaffoldStore = create<ScaffoldState>((set, get) => ({
         history: pushHistory(s),
         runs: [...s.runs, newRun],
         selection: { runId: newRun.id, bayIds: [] },
+        contextMenu: null,
+      };
+    }),
+
+  addSpanAfter: (runId, bayId) =>
+    set((s) => {
+      const run = s.runs.find((r) => r.id === runId);
+      if (!run || run.bays.length === 0) return {};
+      const idx = run.bays.findIndex((b) => b.id === bayId);
+      const refIdx = idx >= 0 ? idx : run.bays.length - 1; // 見つからなければ末尾に追加
+      const ref = run.bays[refIdx];
+      // 参照スパンと同じ向き・同じ長さのプレーンな枠を1つ挿入
+      const newBay: Bay = { id: newId(), span: ref.span, dir: { x: ref.dir.x, z: ref.dir.z } };
+      const bays = [...run.bays];
+      bays.splice(refIdx + 1, 0, newBay);
+      return {
+        history: pushHistory(s),
+        runs: s.runs.map((r) => (r.id === runId ? { ...r, bays } : r)),
+        selection: { runId, bayIds: [newBay.id] },
         contextMenu: null,
       };
     }),
