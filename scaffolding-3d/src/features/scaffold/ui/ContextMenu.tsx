@@ -139,6 +139,8 @@ export function ContextMenu() {
           ➕ 隣に1スパン追加
         </button>
 
+        {/* 「左/右に1列追加」は一旦無効化（今後復活する可能性あり）。
+            ストアの duplicateRunParallel はそのまま残してある。
         <div className="flex gap-1 px-2 py-1">
           <button
             className="flex-1 rounded-md bg-blue-50 px-2 py-1.5 font-semibold text-blue-700 hover:bg-blue-100"
@@ -162,6 +164,7 @@ export function ContextMenu() {
         <p className="px-2 pb-1 text-[10px] leading-tight text-slate-400">
           枠幅ぶん隣に同じ列（開口・階段も含む）を複製します
         </p>
+        */}
 
         <div className="my-1 border-t border-slate-100" />
 
