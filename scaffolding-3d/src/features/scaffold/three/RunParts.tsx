@@ -829,6 +829,66 @@ export function RunParts({
               }
               return <group key={fi}>{items}</group>;
             })}
+            {/* 開口端部（隣接足場のある境界）: 開口段ぶんの妻側手すり（必須・二段）＋巾木/シート（選択制） */}
+            {(() => {
+              const endNodes: number[] = [];
+              if (startN > 0) endNodes.push(startN);
+              if (endN < run.bays.length) endNodes.push(endN);
+              const widthLine = (nodeIdx: number) => {
+                const p = pts[nodeIdx];
+                const perp = perpAt(nodeIdx >= run.bays.length ? run.bays.length - 1 : nodeIdx);
+                return {
+                  a: { x: p.x + perp.x * frontOff, z: p.z + perp.z * frontOff },
+                  b: { x: p.x + perp.x * (frontOff + w), z: p.z + perp.z * (frontOff + w) },
+                };
+              };
+              const openLevels = Array.from({ length: oLv }, (_, i) => i + 1).filter((lv) =>
+                antiSet.has(lv),
+              );
+              return endNodes.map((ni) => {
+                const wl = widthLine(ni);
+                return (
+                  <group key={`oend-${ni}`}>
+                    {openLevels.map((lv) => {
+                      const y0 = baseY + cums[lv - 1];
+                      return (
+                        <group key={lv}>
+                          {/* 妻側手すり（二段・必須） */}
+                          <Bar a={[wl.a.x, y0 + 0.45, wl.a.z]} b={[wl.b.x, y0 + 0.45, wl.b.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                          <Bar a={[wl.a.x, y0 + 0.9, wl.a.z]} b={[wl.b.x, y0 + 0.9, wl.b.z]} r={RAIL_R} color={C_RAIL} paint={paint} />
+                          {/* 妻側巾木（選択制） */}
+                          {settings.openingEndToeboard && (
+                            <Box
+                              center={[(wl.a.x + wl.b.x) / 2, y0 + DECK_LIFT + DECK_T + TOE_H / 2, (wl.a.z + wl.b.z) / 2]}
+                              size={[Math.abs(wl.b.x - wl.a.x) || 0.015, TOE_H, Math.abs(wl.b.z - wl.a.z) || 0.015]}
+                              color={C_TOE}
+                              paint={paint}
+                            />
+                          )}
+                        </group>
+                      );
+                    })}
+                    {/* 妻側メッシュシート（選択制・開口の開いている高さぶん） */}
+                    {settings.openingEndSheet &&
+                      (() => {
+                        const cx = (wl.a.x + wl.b.x) / 2;
+                        const cz = (wl.a.z + wl.b.z) / 2;
+                        const depth = Math.hypot(wl.b.x - wl.a.x, wl.b.z - wl.a.z);
+                        const alongXEnd = Math.abs(wl.b.x - wl.a.x) > Math.abs(wl.b.z - wl.a.z);
+                        return (
+                          <Box
+                            center={[cx, (baseY + topY) / 2, cz]}
+                            size={alongXEnd ? [depth, topY - baseY, 0.006] : [0.006, topY - baseY, depth]}
+                            color={C_SHEET}
+                            paint={paint}
+                            transparentOpacity={0.3}
+                          />
+                        );
+                      })()}
+                  </group>
+                );
+              });
+            })()}
             {/* 開口寸法ラベル */}
             {showDims && (
               <DimLabel
