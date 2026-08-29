@@ -408,6 +408,22 @@ export function SettingsPanel({ bom }: { bom: Bom }) {
           自動計上: 梁わく2本・受け金具SPLT4個・床付き布わく受けパイプSPLE（スパン数−1）・
           方杖4本（SPL54・72のみ）／開口1ヶ所あたり
         </p>
+        <div className="mt-1 border-t border-slate-100 pt-1.5">
+          <p className="mb-1 text-[11px] font-semibold text-slate-600">開口端部の妻側部材</p>
+          <p className="mb-1.5 text-[10px] leading-relaxed text-slate-500">
+            梁枠下の開口段の端部には妻側手すり（二段）を必ず付けます。巾木・シートは任意で追加できます。
+          </p>
+          <Check
+            label="妻側巾木を付ける"
+            checked={s.openingEndToeboard}
+            onChange={(v) => update({ openingEndToeboard: v })}
+          />
+          <Check
+            label="妻側メッシュシートを付ける"
+            checked={s.openingEndSheet}
+            onChange={(v) => update({ openingEndSheet: v })}
+          />
+        </div>
       </Section>
 
       {/* ============ 壁つなぎ ============ */}

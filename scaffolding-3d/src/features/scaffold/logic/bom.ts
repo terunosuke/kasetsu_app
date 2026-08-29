@@ -312,6 +312,25 @@ export function computeBom(runs: Run[], s: GlobalSettings): Bom {
           sub(`巾木（${bay.span}）`, toeInOpening * toeFaces);
         }
       }
+
+      // 開口の端部（隣接する足場がある境界）: 開口段ぶんの妻側手すりを必須で追加。
+      //   妻側手すり=二段（H450+H900）× 開口内のアンチ設置段 × 端部数。巾木・シートは選択制。
+      const startN = g.bayIndices[0];
+      const endN = g.bayIndices[g.bayIndices.length - 1] + 1;
+      const openEnds = (startN > 0 ? 1 : 0) + (endN < seg.bays.length ? 1 : 0);
+      const openDeckLevels = antiLevels.filter((l) => l <= oLv).length; // 開口段の床（＝手すり設置段）
+      if (openEnds > 0 && openDeckLevels > 0) {
+        const wTsuma = run.width;
+        if (WEIGHT_DICT[`妻側手すり（${wTsuma}）`] !== undefined) {
+          add(`妻側手すり（${wTsuma}）`, openEnds * openDeckLevels * 2); // 二段手すり
+        }
+        if (s.openingEndToeboard && WEIGHT_DICT[`妻側巾木（${wTsuma}）`] !== undefined) {
+          add(`妻側巾木（${wTsuma}）`, openEnds * openDeckLevels);
+        }
+        if (s.openingEndSheet && WEIGHT_DICT[`妻側メッシュシート（${wTsuma}）`] !== undefined) {
+          add(`妻側メッシュシート（${wTsuma}）`, openEnds * Math.ceil(oLv / 3));
+        }
+      }
     }
 
     // --- コーナー（L字直角）: 角スパン（長さ=枠幅）を勝ち軸が持つ突き付け納まり ---

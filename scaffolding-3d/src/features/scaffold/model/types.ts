@@ -112,6 +112,10 @@ export interface GlobalSettings {
 
   /** 開口部（梁わく）の方杖サイズ。SPL54・72 使用時に 4本/開口を計上 */
   spsSize: 18 | 15 | 12 | 9;
+  /** 開口端部の妻側巾木を付けるか（妻側手すりは必須で常時付く） */
+  openingEndToeboard: boolean;
+  /** 開口端部の妻側メッシュシートを付けるか */
+  openingEndSheet: boolean;
 
   // --- 壁つなぎ ---
   wallTieMode: WallTieKind;
@@ -162,6 +166,8 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   stairLevels: '',
   stairWidening: false,
   spsSize: 18,
+  openingEndToeboard: false,
+  openingEndSheet: false,
 
   wallTieMode: 'none',
   wallTieLevelMode: 'all',
