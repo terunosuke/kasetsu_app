@@ -45,7 +45,7 @@ export function SelectionPanel() {
         全長 {runLength(run).toLocaleString()}mm ／ {run.bays.length}スパン
       </p>
       <p className="-mt-1.5 text-[10px] leading-relaxed text-slate-400">
-        Ctrl+クリック=追加選択 ／ Shift+クリック=範囲選択 ／ 右クリック=入力モードへ
+        Ctrl+クリック=追加選択 ／ Shift+クリック=範囲選択 ／ 足場を右クリック=編集メニュー
       </p>
 
       <div className="flex items-center justify-between gap-2">
