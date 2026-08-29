@@ -6,7 +6,7 @@
  * 選択モード: 部材クリックで選択（Ctrl=追加 / Shift=範囲）、右クリックで編集メニュー。
  * どちらのモードでも 右ドラッグ=回転 / ホイール=ズーム が使える。
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
@@ -118,21 +118,6 @@ function PlacedRuns() {
               onPickRun={
                 mode === 'select' ? () => useScaffoldStore.getState().selectRun(run.id) : undefined
               }
-              onContextMenu={
-                mode === 'select'
-                  ? (x, y, bayId) => {
-                      const st = useScaffoldStore.getState();
-                      // 未選択の列を右クリックしたら、その列（＋ベイ）を選択してからメニュー
-                      if (st.selection?.runId !== run.id) {
-                        if (bayId) st.selectBay(run.id, bayId);
-                        else st.selectRun(run.id);
-                      } else if (bayId && !st.selection.bayIds.includes(bayId)) {
-                        st.selectBay(run.id, bayId);
-                      }
-                      st.openContextMenu({ x, y, runId: run.id });
-                    }
-                  : undefined
-              }
             />
             {/* 選択中の列の全長ラベル */}
             {isSelected && (
@@ -175,6 +160,10 @@ function Controls() {
 }
 
 export default function ScaffoldCanvas() {
+  // 右クリック（ドラッグでない）で 入力⇔選択 モードを切り替える。
+  // 右ドラッグは回転/パンなので、押下位置からの移動が小さいときだけトグルする。
+  const rightDown = useRef<{ x: number; y: number } | null>(null);
+
   // Esc / Enter: メニューを閉じる → 描画中の列を完成
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -192,8 +181,25 @@ export default function ScaffoldCanvas() {
   }, []);
 
   return (
-    <Canvas camera={{ position: [16, 13, 16], fov: 45 }} className="h-full w-full">
-      <color attach="background" args={['#eef3f8']} />
+    <div
+      className="h-full w-full"
+      onPointerDown={(e) => {
+        if (e.button === 2) rightDown.current = { x: e.clientX, y: e.clientY };
+      }}
+      onPointerUp={(e) => {
+        // 右クリック（ドラッグでない）でモード切替。ドラッグ（回転/パン）は切り替えない。
+        // ※ contextmenu は環境により押下時に発火するためタイミングが不安定。pointerup で判定する。
+        if (e.button !== 2) return;
+        const start = rightDown.current;
+        rightDown.current = null;
+        if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) return;
+        const s = useScaffoldStore.getState();
+        s.setMode(s.mode === 'build' ? 'select' : 'build');
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <Canvas camera={{ position: [16, 13, 16], fov: 45 }} className="h-full w-full">
+        <color attach="background" args={['#eef3f8']} />
       <ambientLight intensity={0.85} />
       <directionalLight position={[12, 24, 8]} intensity={1.1} />
       <directionalLight position={[-10, 12, -14]} intensity={0.3} />
@@ -211,6 +217,7 @@ export default function ScaffoldCanvas() {
       <PlacedRuns />
       <GhostRun />
       <Controls />
-    </Canvas>
+      </Canvas>
+    </div>
   );
 }
